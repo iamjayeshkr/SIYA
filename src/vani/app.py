@@ -645,6 +645,154 @@ def _run_state_server():
     server.serve_forever()
 
 
+# ── P3: FastAPI server for Tauri desktop app (port 8765) ──────────────────────
+# The Tauri Rust layer talks to Python via HTTP on port 8765.
+# All endpoints are non-blocking and safe to call from a Rust async task.
+
+def _start_tauri_api_server():
+    """Start the FastAPI/uvicorn server for Tauri IPC on port 8765.
+    Runs in a background daemon thread so it never blocks the main loop."""
+    try:
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+
+        tauri_api = FastAPI(title="Vani Tauri API", version="0.1.0")
+        tauri_api.add_middleware(
+            CORSMiddleware,
+            allow_origins=["tauri://localhost", "http://localhost:1420"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        # ── /query — main chat endpoint ───────────────────────────────────────
+        @tauri_api.post("/query")
+        async def tauri_query(body: dict):
+            """Route a text query through Vani's existing reasoning stack."""
+            text = body.get("text", "").strip()
+            if not text:
+                return {"text": "", "model_used": "", "duration_ms": 0, "tool_calls": []}
+            import time as _time
+            t0 = _time.monotonic()
+            try:
+                from vani.services.text_chat import handle_text_command
+                reply = await handle_text_command(text)
+            except Exception as e:
+                log.warning(f"[tauri_api] /query error: {e}")
+                reply = f"Error: {e}"
+            duration_ms = int((_time.monotonic() - t0) * 1000)
+            return {
+                "text": reply,
+                "model_used": os.getenv("PREFERRED_MODEL", "unknown"),
+                "duration_ms": duration_ms,
+                "tool_calls": [],
+            }
+
+        # ── /memory/stats — memory summary ───────────────────────────────────
+        @tauri_api.get("/memory/stats")
+        async def tauri_memory_stats():
+            """Return semantic memory + working memory counts."""
+            try:
+                from vani.memory.working_memory import WorkingMemory
+                wm = WorkingMemory()
+                working_entries = len(wm.get_all()) if hasattr(wm, "get_all") else 0
+            except Exception:
+                working_entries = 0
+            try:
+                from vani.vani_legacy.db import get_memory_count
+                semantic_memories = get_memory_count()
+            except Exception:
+                semantic_memories = 0
+            return {
+                "semantic_memories": semantic_memories,
+                "working_entries": working_entries,
+                "has_permanent": semantic_memories > 0,
+            }
+
+        # ── /memory/search — semantic search ─────────────────────────────────
+        @tauri_api.post("/memory/search")
+        async def tauri_memory_search(body: dict):
+            """Search semantic memory and return ranked results."""
+            query = body.get("query", "").strip()
+            top_k = int(body.get("top_k", 10))
+            if not query:
+                return []
+            try:
+                from vani.vani_legacy.memory_semantic import SemanticMemory
+                sem = SemanticMemory()
+                results = await sem.search(query, top_k=top_k)
+                return results
+            except Exception as e:
+                log.warning(f"[tauri_api] /memory/search error: {e}")
+                return []
+
+        # ── /tools/history — tool audit log ──────────────────────────────────
+        @tauri_api.get("/tools/history")
+        async def tauri_tool_history(tool: str = None):
+            """Return recent tool calls from the audit log."""
+            try:
+                from vani.vani_legacy.db import get_tool_audit_log
+                rows = get_tool_audit_log(tool_name=tool, limit=50)
+                return rows
+            except Exception as e:
+                log.warning(f"[tauri_api] /tools/history error: {e}")
+                return []
+
+        # ── /models/status — model router health ─────────────────────────────
+        @tauri_api.get("/models/status")
+        async def tauri_model_status():
+            """Return health status of all models in the fallback chain."""
+            try:
+                from vani.vani_legacy.model_router import model_router as _mr
+                return _mr.status()
+            except Exception as e:
+                log.warning(f"[tauri_api] /models/status error: {e}")
+                # Fallback: probe Ollama directly
+                models = {}
+                try:
+                    import requests as _req
+                    r = _req.get("http://127.0.0.1:11434/api/tags", timeout=2)
+                    if r.ok:
+                        for m in r.json().get("models", []):
+                            name = m.get("name", "").split(":")[0]
+                            models[name] = {"healthy": True, "provider": "ollama", "tier": "medium"}
+                except Exception:
+                    pass
+                return models
+
+        # ── /state — mirror existing state dict ──────────────────────────────
+        @tauri_api.get("/state")
+        async def tauri_get_state():
+            return state
+
+        def _run():
+            config = uvicorn.Config(
+                tauri_api,
+                host="127.0.0.1",
+                port=8765,
+                loop="asyncio",
+                log_level="warning",
+                access_log=False,
+            )
+            server = uvicorn.Server(config)
+            import asyncio as _asyncio
+            _loop = _asyncio.new_event_loop()
+            _asyncio.set_event_loop(_loop)
+            _loop.run_until_complete(server.serve())
+
+        t = threading.Thread(target=_run, daemon=True, name="tauri-api")
+        t.start()
+        log.info("[tauri_api] FastAPI server started on http://127.0.0.1:8765")
+    except ImportError as e:
+        log.warning(
+            f"[tauri_api] fastapi/uvicorn not installed — Tauri IPC disabled: {e}\n"
+            "  Install with: pip install fastapi uvicorn"
+        )
+    except Exception as e:
+        log.warning(f"[tauri_api] Failed to start Tauri API server (non-fatal): {e}")
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 def _generate_token(room_name: str, identity: str) -> str:
     try:
         from livekit.api import AccessToken, VideoGrants
@@ -1149,6 +1297,10 @@ def main():
     except Exception: pass
 
     threading.Thread(target=_run_state_server, daemon=True).start()
+
+    # ── P3: Start Tauri API server (port 8765) ────────────────────────────────
+    _start_tauri_api_server()
+    # ──────────────────────────────────────────────────────────────────────────
 
     # ── Phase 7: Start background workers ─────────────────────────────────────
     # Reminder checker, maintenance, and self-improvement run as daemon threads.

@@ -14,3 +14,4 @@
 
 # === P2: Model Router & Offline Voice ===
 -r requirements-p2.txt
+-r requirements-p3.txt
