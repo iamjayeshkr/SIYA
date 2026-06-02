@@ -1,0 +1,16 @@
+# ============================================================
+# VANI OS - Combined Requirements (Base + P0 + P1 + P2)
+# Install: pip install -r requirements/requirements-all.txt
+# ============================================================
+
+# === BASE ===
+-r base.txt
+
+# === P0: Stability & Logging ===
+-r requirements-p0.txt
+
+# === P1: Semantic Memory ===
+-r requirements-p1.txt
+
+# === P2: Model Router & Offline Voice ===
+-r requirements-p2.txt

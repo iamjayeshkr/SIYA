@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements_windows.txt — Vani (Windows)
+# Install: pip install -r requirements_windows.txt
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Google AI ─────────────────────────────────────────────────────────────────
+google-genai
+google-api-core
+google-auth
+google-cloud-speech
+google-cloud-texttospeech
+googleapis-common-protos
+grpcio
+grpcio-status
+proto-plus
+protobuf
+
+# ── LangChain ─────────────────────────────────────────────────────────────────
+langchain
+langchain-community
+langchain-core
+langchain-google-genai
+langchain-text-splitters
+langsmith
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+openai
+
+# ── HTTP / async ──────────────────────────────────────────────────────────────
+aiofiles
+aiohttp
+anyio
+certifi
+charset-normalizer
+httpx
+httpx-sse
+requests
+requests-toolbelt
+urllib3
+websockets
+
+# ── Pydantic / typing ─────────────────────────────────────────────────────────
+pydantic
+pydantic-settings
+typing_extensions
+
+# ── Fuzzy matching ────────────────────────────────────────────────────────────
+fuzzywuzzy
+python-Levenshtein
+RapidFuzz
+
+# ── System control (mouse / keyboard) ────────────────────────────────────────
+PyAutoGUI
+pynput
+pillow
+pyperclip
+pygetwindow
+# Windows-only system control (comment out on Mac):
+pywin32
+
+# ── Search ────────────────────────────────────────────────────────────────────
+duckduckgo-search
+
+# ── Audio / ML ───────────────────────────────────────────────────────────────
+sounddevice
+numpy
+onnxruntime
+av
+
+# ── Desktop app (Phase 1) ─────────────────────────────────────────────────────
+pywebview
+
+# ── Phase 3 (system tray + hotkey) ───────────────────────────────────────────
+# Uncomment when starting Phase 3:
+# pystray                            # Windows system tray icon
+# pillow                             # already above — tray icon image
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv
+watchfiles
+nest-asyncio
+click
+colorama
+coloredlogs
+orjson
+packaging
+psutil
+PyJWT
+PyYAML
+tenacity
+tqdm
+
+# ── Data / serialisation ──────────────────────────────────────────────────────
+dataclasses-json
+marshmallow
+jsonpatch
+jsonpointer
+SQLAlchemy
+lxml
+
+# ── OpenTelemetry ─────────────────────────────────────────────────────────────
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+opentelemetry-exporter-otlp-proto-common
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-exporter-otlp-proto-http
+prometheus_client

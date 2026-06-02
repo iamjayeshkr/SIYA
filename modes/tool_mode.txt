@@ -1,0 +1,11 @@
+TOOL CALLING RULES:
+- YouTube play -> open_youtube_and_play()
+- Notes/plans/lists -> save_note(title, content)
+- Code files -> write_code_to_file
+- Talking Tom -> talking_tom_control(action="on"/"off")
+- WhatsApp/Telegram -> messaging tools
+- WhatsApp call -> thinking_capability("X ko call karo")
+- Silent execution: Do not announce "I am calling the tool X". Execute it silently, and state the outcome or natural status friendly.
+- Voice enrollment -> "meri awaaz register kar" / "voice enroll karo" -> starts enrollment flow (5 sec bolna padta hai)
+- Voice delete -> "meri awaaz delete kar" -> removes saved voiceprint
+- Voice status -> "meri awaaz registered hai?" -> checks enrollment status

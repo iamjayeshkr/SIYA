@@ -1,0 +1,116 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+.venv/
+env/
+ENV/
+venv311/
+venv311_new/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# macOS
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Build Outputs
+# =========================
+build/
+dist/
+downloads/
+temp/
+tmp/
+
+# =========================
+# Python Packaging
+# =========================
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# =========================
+# Android
+# =========================
+.gradle/
+local.properties
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+
+# =========================
+# Node
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Database / Storage
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# AI / Memory Stores
+# =========================
+conversations/
+book_memory_store/
+KMS/
+
+# =========================
+# Secrets
+# =========================
+*.pem
+*.key
+*.crt
+secrets.json
+credentials.json
+
+# =========================
+# Generated Files
+# =========================
+_ui_patched.html
+*.tmp
+*.bak
+*.cache
+
+# =========================
+# Claude / Cursor / AI
+# =========================
+.cursor/
+.claude/

@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vani</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;600;700&family=Exo+2:ital,wght@0,200;0,300;0,400;1,200&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<script src="/livekit-client.umd.min.js"></script>
+
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #03030a;
+  --accent:   #c47eff;
+  --accent2:  #7c3aed;
+  --gold:     #f5c842;
+  --glow:     rgba(196, 126, 255, 0.22);
+  --text:     #f0eaff;
+  --muted:    #6b5f80;
+  --green:    #4ade80;
+  --red:      #f87171;
+  --rim:      rgba(196,126,255,0.15);
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Exo 2', sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ══════════════════════════════════════════════
+   VIDEO AVATAR SYSTEM
+   Layering:
+   Z1: listening.gif (Permanent background)
+   Z2: talking1.mp4  (Speech overlay)
+   Z3: opening2.mp4  (Startup - fades out to reveal base)
+══════════════════════════════════════════════ */
+
+#avatar-container {
+  position: fixed;
+  inset: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  background: #03030a;
+}
+
+.avatar-video {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  pointer-events: none;
+  will-change: opacity;
+  transition: opacity .8s cubic-bezier(.4, 0, .2, 1);
+}
+
+#vid-listening { z-index: 1; opacity: 1; }
+#vid-talking   { z-index: 2; opacity: 0; }
+#vid-opening2  { z-index: 3; opacity: 1; }
+
+#video-overlay {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(3,3,10,0.85) 0%, transparent 100%),
+    radial-gradient(ellipse 100% 30% at 50% 0%,   rgba(3,3,10,0.6)  0%, transparent 100%);
+  z-index: 1;
+  pointer-events: none;
+}
+
+#video-overlay::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px
+  );
+  pointer-events: none;
+}
+
+.shell {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 18px 22px 20px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.logo {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  font-size: 26px;
+  letter-spacing: 2px;
+  background: linear-gradient(135deg, var(--accent), var(--gold));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  line-height: 1;
+}
+.logo-sub {
+  font-family: 'Exo 2', sans-serif;
+  font-size: 11px;
+  font-weight: 200;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.quit-btn {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--rim);
+  background: rgba(0,0,0,0.45);
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s;
+}
+.quit-btn:hover { background: rgba(196,126,255,0.2); color: var(--text); border-color: var(--accent); }
+
+.spacer { flex: 1; }
+
+.speak-ring {
+  position: fixed;
+  inset: -4px;
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.4s;
+  box-shadow: inset 0 0 40px 8px rgba(196,126,255,0.0), inset 0 0 0 3px transparent;
+}
+body.speaking .speak-ring {
+  opacity: 1;
+  animation: ring-pulse 1.3s ease-in-out infinite;
+  box-shadow:
+    inset 0 0 60px 12px rgba(196,126,255,0.18),
+    inset 0 0 0 3px rgba(196,126,255,0.4);
+}
+
+.hud {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.wave {
+  display: flex; align-items: center; gap: 3px;
+  height: 28px; opacity: 0;
+  transition: opacity 0.35s;
+}
+body.listening .wave, body.speaking .wave { opacity: 1; }
+
+.wave-bar {
+  width: 3px; border-radius: 3px;
+  background: var(--accent); height: 3px;
+}
+body.listening .wave-bar { animation: wave-anim var(--wd, 0.6s) ease-in-out infinite alternate; }
+body.speaking  .wave-bar { animation: wave-anim var(--wd, 0.4s) ease-in-out infinite alternate; background: var(--gold); }
+
+.status-pill {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(3,3,10,0.6);
+  border: 1px solid var(--rim);
+  border-radius: 100px;
+  padding: 6px 18px;
+  backdrop-filter: blur(16px);
+}
+
+.dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+body.connected .dot  { background: var(--green);  animation: dot-blink 2s ease-in-out infinite; }
+body.speaking  .dot  { background: var(--accent); animation: dot-blink 0.6s ease-in-out infinite; }
+body.listening .dot  { background: var(--gold);   animation: dot-blink 1s ease-in-out infinite; }
+
+.status-txt {
+  font-size: 13px; font-weight: 300;
+  letter-spacing: 0.5px; color: var(--muted);
+  transition: color 0.3s;
+}
+body.speaking  .status-txt { color: var(--accent); }
+body.listening .status-txt { color: var(--gold); }
+body.connected .status-txt { color: var(--green); }
+
+.name-strip {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px; font-weight: 600;
+  letter-spacing: 5px; text-transform: uppercase;
+  color: rgba(196,126,255,0.5);
+}
+
+#conn-overlay {
+  position: fixed; inset: 0; z-index: 10;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 18px;
+  transition: opacity 0.5s;
+}
+#conn-overlay.hidden { opacity: 0; pointer-events: none; }
+
+.conn-logo {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700; font-size: 52px; letter-spacing: 4px;
+  background: linear-gradient(135deg, var(--accent), var(--gold));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.conn-spinner {
+  width: 36px; height: 36px;
+  border: 2px solid var(--rim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.conn-msg {
+  font-size: 13px; font-weight: 200;
+  letter-spacing: 2px; color: var(--muted);
+  text-transform: uppercase;
+}
+
+@keyframes ring-pulse { 0%,100%{opacity:0.7} 50%{opacity:1} }
+@keyframes wave-anim  { from{height:3px} to{height:22px} }
+@keyframes dot-blink  { 0%,100%{opacity:1} 50%{opacity:0.3} }
+@keyframes spin       { to{transform:rotate(360deg)} }
+
+/* ══════════════════════════════════════════════
+   TEXT PANEL
+══════════════════════════════════════════════ */
+#text-panel {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 20;
+  background: rgba(3,3,10,0.93);
+  backdrop-filter: blur(24px);
+  border-top: 1px solid var(--rim);
+  border-radius: 20px 20px 0 0;
+  padding: 14px 16px 20px;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+  display: flex; flex-direction: column;
+  gap: 10px;
+  max-height: 72vh;
+}
+#text-panel.open { transform: translateY(0); }
+
+#panel-handle {
+  width: 38px; height: 4px;
+  background: var(--rim);
+  border-radius: 2px;
+  margin: 0 auto 4px;
+  cursor: pointer;
+}
+
+#chat-history {
+  flex: 1;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent2) transparent;
+}
+
+.msg-row { display: flex; gap: 8px; align-items: flex-end; }
+.msg-row.user { flex-direction: row-reverse; }
+
+.bubble {
+  max-width: min(86%, 720px);
+  padding: 8px 13px;
+  border-radius: 16px;
+  font-size: 13px; line-height: 1.5;
+  word-break: break-word;
+}
+.bubble.vani-bubble {
+  user-select: text;
+}
+.bubble.user-bubble {
+  background: linear-gradient(135deg, var(--accent2), #9333ea);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.bubble.vani-bubble {
+  background: rgba(196,126,255,0.1);
+  border: 1px solid var(--rim);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.bubble.vani-bubble.thinking {
+  color: var(--muted); font-style: italic;
+  animation: dot-blink 1s ease-in-out infinite;
+}
+.bubble .md-h1 {
+  display: block;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--gold);
+  margin: 2px 0 10px;
+  letter-spacing: 0.5px;
+}
+.bubble .md-h2 {
+  display: block;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 14px 0 6px;
+}
+.bubble p { margin: 7px 0; }
+.bubble ul, .bubble ol { margin: 7px 0 8px 18px; }
+.bubble li { margin: 4px 0; padding-left: 2px; }
+.bubble strong { color: #fff; font-weight: 700; }
+.bubble code {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(196,126,255,0.18);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.bubble pre {
+  margin: 9px 0;
+  padding: 10px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(196,126,255,0.18);
+  white-space: pre-wrap;
+}
+
+#input-row { display: flex; gap: 8px; align-items: center; }
+
+#msg-input {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--rim);
+  border-radius: 24px;
+  padding: 10px 16px;
+  color: var(--text);
+  font-family: 'Exo 2', sans-serif;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  user-select: text;
+}
+#msg-input:focus { border-color: var(--accent); }
+#msg-input::placeholder { color: var(--muted); }
+
+#photo-btn,
+#doc-btn,
+#send-btn {
+  width: 40px; height: 40px;
+  border-radius: 50%; border: none;
+  color: white; font-size: 16px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.15s, opacity 0.15s;
+}
+#photo-btn,
+#doc-btn {
+  background: rgba(196,126,255,0.12);
+  border: 1px solid var(--rim);
+  color: var(--accent);
+  box-shadow: 0 0 12px rgba(196,126,255,0.12);
+}
+#send-btn {
+  background: linear-gradient(135deg, var(--accent2), #9333ea);
+  box-shadow: 0 0 12px rgba(124,58,237,0.5);
+}
+#tts-stop-btn {
+  display: none;
+  width: 40px; height: 40px;
+  border-radius: 50%; border: 1px solid rgba(255,80,80,0.35);
+  background: rgba(255,80,80,0.18);
+  color: #ff6060; font-size: 18px;
+  cursor: pointer;
+  align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.15s, opacity 0.15s;
+}
+#tts-stop-btn:hover { transform: scale(1.08); background: rgba(255,80,80,0.30); }
+#photo-btn:hover,
+#doc-btn:hover,
+#send-btn:hover  { transform: scale(1.08); }
+#photo-btn:active,
+#doc-btn:active,
+#send-btn:active { transform: scale(0.95); opacity: 0.8; }
+#photo-btn:disabled,
+#doc-btn:disabled,
+#send-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+#doc-file,
+#photo-file { display: none; }
+
+#panel-toggle {
+  position: fixed;
+  bottom: 22px; right: 22px;
+  z-index: 15;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--rim);
+  background: rgba(3,3,10,0.8);
+  backdrop-filter: blur(12px);
+  color: var(--accent);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+  box-shadow: 0 0 18px rgba(196,126,255,0.15);
+}
+#panel-toggle:hover  { border-color: var(--accent); background: rgba(196,126,255,0.12); }
+#panel-toggle.active { background: rgba(124,58,237,0.3); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- Connection splash -->
+<div id="conn-overlay">
+  <div class="conn-logo">वाणी</div>
+  <div class="conn-spinner"></div>
+  <div class="conn-msg" id="conn-msg">Connecting…</div>
+  <button id="start-btn"
+          style="display:none;margin-top:24px;padding:12px 32px;background:#7c3aed;
+                 color:white;border:none;border-radius:24px;font-size:16px;cursor:pointer;">
+    ▶ Tap to Hear Vani
+  </button>
+</div>
+
+<!-- ══ AVATAR SYSTEM ══
+     vid-listening → optimized animated idle video, GIF fallback
+     vid-talking   → talking1.mp4, lazy loaded only while speaking
+     vid-opening2  → opening2.mp4 startup splash, skipped in low-power mode
+-->
+<div id="avatar-container">
+  <video id="vid-listening" class="avatar-video" src="listening_optimized.mp4" poster="vani_idle.png" loop muted playsinline preload="metadata"></video>
+  <video id="vid-talking"   class="avatar-video" data-src="talking1.mp4" loop muted playsinline preload="none"></video>
+  <video id="vid-opening2"  class="avatar-video" data-src="opening2.mp4" muted playsinline preload="none"></video>
+</div>
+
+<div id="video-overlay"></div>
+<div class="speak-ring"></div>
+<audio id="agent-audio" autoplay playsinline style="display:none;"></audio>
+
+<!-- Main UI -->
+<div class="shell">
+  <div class="header">
+    <div>
+      <div class="logo">वाणी</div>
+      <div class="logo-sub">by Rudra</div>
+    </div>
+    <button class="quit-btn" onclick="quit()" title="Close">✕</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="hud">
+    <div class="wave">
+      <div class="wave-bar" style="--wd:0.50s"></div>
+      <div class="wave-bar" style="--wd:0.70s"></div>
+      <div class="wave-bar" style="--wd:0.40s"></div>
+      <div class="wave-bar" style="--wd:0.90s"></div>
+      <div class="wave-bar" style="--wd:0.55s"></div>
+      <div class="wave-bar" style="--wd:0.30s"></div>
+      <div class="wave-bar" style="--wd:0.75s"></div>
+      <div class="wave-bar" style="--wd:0.45s"></div>
+      <div class="wave-bar" style="--wd:0.65s"></div>
+      <div class="wave-bar" style="--wd:0.35s"></div>
+      <div class="wave-bar" style="--wd:0.80s"></div>
+      <div class="wave-bar" style="--wd:0.50s"></div>
+    </div>
+    <div class="status-pill">
+      <div class="dot"></div>
+      <div class="status-txt" id="status-text">Connecting…</div>
+    </div>
+    <div class="name-strip">Vani · Personal AI</div>
+  </div>
+</div>
+
+<!-- Text panel toggle button -->
+<button id="panel-toggle" title="Type to Vani" onclick="togglePanel()">⌨️</button>
+
+<!-- Text panel -->
+<div id="text-panel">
+  <div id="panel-handle" onclick="togglePanel()"></div>
+  <div id="chat-history"></div>
+  <div id="input-row">
+    <input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif">
+    <button id="photo-btn" onclick="choosePhoto()" title="Review photo/image">📷</button>
+    <input id="doc-file" type="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.py,.js,.ts,.html,.css,.xml,.docx,.pdf,.rtf,.doc,.odt">
+    <button id="doc-btn" onclick="chooseDocument()" title="Upload PDF — Vani will memorise it for 2 days">📄</button>
+    <span id="doc-badge" style="display:none;font-size:10px;color:#4ade80;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" title="Click to clear" onclick="clearDocument()">📚 ✕</span>
+    <input id="msg-input" type="text" placeholder="Type to Vani…" autocomplete="off"
+           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}">
+    <button id="tts-stop-btn" onclick="stopBrowserTTS()" title="Stop speaking">■</button>
+    <button id="send-btn" onclick="sendMessage()" title="Send">↑</button>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  VANI AVATAR ENGINE
+// ════════════════════════════════════════════════════════════
+
+const vidOpening2  = document.getElementById('vid-opening2');
+const vidListening = document.getElementById('vid-listening');
+const vidTalking   = document.getElementById('vid-talking');
+const lowPowerMeta = document.querySelector('meta[name="ui-low-power"]');
+const fastStartMeta = document.querySelector('meta[name="ui-fast-start"]');
+const lowPowerAnimated = new URLSearchParams(location.search).get('lowPower') === '1'
+  || localStorage.getItem('VANI_LOW_POWER_UI') === '1'
+  || (lowPowerMeta && lowPowerMeta.content === '1');
+const fastStartUi = new URLSearchParams(location.search).get('fastStart') !== '0'
+  && localStorage.getItem('VANI_FAST_START_UI') !== '0'
+  && (!fastStartMeta || fastStartMeta.content !== '0');
+
+const rnd = (a, b) => Math.random() * (b - a) + a;
+
+let _startupDone = false;
+let _avatarState = 'startup';
+let _talkingTimer = null;
+
+function initAvatar() {
+  vidListening.play().catch(() => {});
+  vidListening.onerror = () => {
+    const fallback = document.createElement('img');
+    fallback.id = 'vid-listening';
+    fallback.className = 'avatar-video';
+    fallback.src = 'listening.gif';
+    vidListening.replaceWith(fallback);
+  };
+
+  if (lowPowerAnimated || fastStartUi) {
+    document.body.classList.add('low-power-animated');
+    _enterRuntime();
+    vidOpening2.removeAttribute('src');
+    vidOpening2.load();
+    return;
+  }
+
+  // 1. Start opening video only in full visual mode
+  if (!vidOpening2.src) vidOpening2.src = vidOpening2.dataset.src;
+  vidOpening2.play().catch(() => {});
+  
+  // 2. Talking video is lazy loaded on first speech to reduce startup RAM/GPU.
+
+  // 4. Transition when opening2 ends
+  vidOpening2.onended = () => {
+    _enterRuntime();
+  };
+  
+  // Fallback if ended event fails
+  setTimeout(() => {
+    if (!_startupDone) _enterRuntime();
+  }, 8500);
+}
+
+function _enterRuntime() {
+  if (_startupDone) return;
+  _startupDone = true;
+  _avatarState = 'listening';
+
+  // listening.gif is permanent background (already opacity 1)
+
+  // opening2 fades out to reveal listening.gif underneath
+  vidOpening2.style.opacity = '0';
+  
+  // Ensure talking video is ready but hidden
+  vidTalking.style.opacity = '0';
+}
+
+function setAvatarState(newState) {
+  if (!_startupDone) return;
+  if (newState === _avatarState && !_talkingTimer) return;
+
+  if (newState === 'talking') {
+    if (_talkingTimer) { clearTimeout(_talkingTimer); _talkingTimer = null; }
+    _avatarState = 'talking';
+    if (!vidTalking.src) vidTalking.src = vidTalking.dataset.src;
+    vidTalking.play().catch(() => {});
+    vidTalking.style.opacity = '1';
+
+  } else if (newState === 'listening') {
+    if (_talkingTimer) return; // Already lingering
+
+    // Random linger 100-200ms then fade out
+    _talkingTimer = setTimeout(() => {
+      _talkingTimer = null;
+      if (_avatarState === 'talking') {
+        _avatarState = 'listening';
+        vidTalking.style.opacity = '0';
+        
+        // Pause video after fade out (800ms) to save resources
+        setTimeout(() => {
+          if (_avatarState === 'listening') vidTalking.pause();
+        }, 800);
+      }
+    }, rnd(100, 200));
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  STATE MANAGEMENT — LiveKit calls this
+// ════════════════════════════════════════════════════════════
+function updateState(s) {
+  const body = document.body;
+  body.classList.remove('speaking', 'listening', 'connected');
+  if (s.connected) body.classList.add('connected');
+  if (s.speaking)  body.classList.add('speaking');
+  if (s.listening) body.classList.add('listening');
+  document.getElementById('status-text').textContent = s.status || 'Ready';
+  if (s.text_ready && !s.connected && overlay && !overlay.classList.contains('hidden')) {
+    connMsg.textContent = 'Text/image ready - voice connecting...';
+    setTimeout(hideOverlay, 900);
+  }
+
+  if      (s.speaking)  setAvatarState('talking');
+  else if (s.listening) setAvatarState('listening');
+}
+
+// ... rest of audio/livekit logic remains unchanged ...
+
+// ════════════════════════════════════════════════════════════
+//  AUDIO
+// ════════════════════════════════════════════════════════════
+const agentAudioEl = document.getElementById('agent-audio');
+let attachedAgentAudioKey = null;
+let attachedAgentAudioTrack = null;
+let agentSpeechActive = false;
+
+function attachRemoteAudioTrack(track, publication) {
+  const key = publication?.trackSid || publication?.sid || track?.sid || track?.mediaStreamTrack?.id || null;
+  if (key && key === attachedAgentAudioKey) return;
+  try {
+    if (attachedAgentAudioTrack && typeof attachedAgentAudioTrack.detach === 'function') {
+      attachedAgentAudioTrack.detach(agentAudioEl);
+    }
+  } catch (_) {}
+  attachedAgentAudioKey = key;
+  attachedAgentAudioTrack = track;
+  track.attach(agentAudioEl);
+  agentAudioEl.play().catch(() => {
+    console.warn('[audio] Autoplay blocked — waiting for user gesture');
+    if (window.room) showAudioUnlock(window.room);
+  });
+}
+
+function hasLiveKitVoice() {
+  return !!(window.room && window.room.state === 'connected' && (attachedAgentAudioTrack || agentAudioEl.srcObject || agentAudioEl.src));
+}
+
+function stripForSpeech(text, limit = 1200) {
+  const clean = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' code block text panel mein hai ')
+    .replace(/[#*_`>\-|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!limit || clean.length <= limit) return clean;
+  return clean.slice(0, limit).replace(/\s+\S*$/, '') + '. Baaki details text panel mein dekh lo.';
+}
+
+function speakBrowserFallback(text, options = {}) {
+  // If LiveKit/Realtime Gemini is connected, it will speak — never use browser TTS.
+  if (hasLiveKitVoice() || (window.room && window.room.state === 'connected')) return;
+  speakBrowserFallbackNow(text, options);
+}
+
+function stopBrowserTTS() {
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+
+function speakBrowserFallbackNow(text, options = {}) {
+  if (!('speechSynthesis' in window)) return;
+  const speech = stripForSpeech(text, options.limit || 1200);
+  if (!speech) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(speech);
+  utterance.lang = options.lang || 'hi-IN';
+  utterance.rate = Number(localStorage.getItem('VANI_BROWSER_TTS_RATE') || '1.02');
+  utterance.pitch = Number(localStorage.getItem('VANI_BROWSER_TTS_PITCH') || '1.0');
+  // Show stop button while speaking
+  const stopBtn = document.getElementById('tts-stop-btn');
+  if (stopBtn) {
+    stopBtn.style.display = 'inline-flex';
+    utterance.onend = utterance.onerror = () => { stopBtn.style.display = 'none'; };
+  }
+  window.speechSynthesis.speak(utterance);
+}
+
+// ════════════════════════════════════════════════════════════
+//  LIVEKIT
+// ════════════════════════════════════════════════════════════
+const overlay  = document.getElementById('conn-overlay');
+const connMsg  = document.getElementById('conn-msg');
+const startBtn = document.getElementById('start-btn');
+
+function hideOverlay() { overlay.classList.add('hidden'); }
+
+async function unlockRoomAudio(room) {
+  try {
+    if (typeof room.startAudio === 'function') {
+      await room.startAudio();
+    }
+    if (agentAudioEl.srcObject || agentAudioEl.src) {
+      await agentAudioEl.play();
+    }
+    return true;
+  } catch (err) {
+    console.warn('[audio] Playback needs a user gesture:', err);
+    return false;
+  }
+}
+
+function showAudioUnlock(room) {
+  overlay.classList.remove('hidden');
+  connMsg.textContent = 'Tap to hear Vani';
+  startBtn.style.display = 'block';
+  startBtn.onclick = async () => {
+    startBtn.disabled = true;
+    connMsg.textContent = 'Starting audio...';
+    const ok = await unlockRoomAudio(room);
+    startBtn.disabled = false;
+    if (ok) {
+      startBtn.style.display = 'none';
+      hideOverlay();
+      updateState({ connected: true, speaking: false, listening: false, status: 'Ready - say something!' });
+      room.remoteParticipants.forEach((participant) => {
+        participant.audioTrackPublications.forEach((pub) => {
+          if (pub.isSubscribed && pub.track) attachRemoteAudioTrack(pub.track, pub);
+        });
+      });
+    } else {
+      connMsg.textContent = 'Audio blocked - tap again';
+    }
+  };
+}
+
+function livekitBrowserUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === 'https:') url.protocol = 'wss:';
+    if (url.protocol === 'http:') url.protocol = 'ws:';
+    return url.toString().replace(/\/$/, '');
+  } catch (_) {
+    return rawUrl;
+  }
+}
+
+let livekitRetryCount = 0;
+let livekitRetryTimer = null;
+
+function scheduleLiveKitRetry(reason) {
+  livekitRetryCount += 1;
+  const delayMs = Math.min(120000, 5000 * Math.pow(2, livekitRetryCount - 1));
+  const seconds = Math.round(delayMs / 1000);
+  const message = String(reason || '').toLowerCase();
+  const likelyRateLimited = message.includes('429') || message.includes('rate limit') || message.includes('quota');
+  connMsg.textContent = likelyRateLimited
+    ? `LiveKit rate limit — retrying in ${seconds}s`
+    : `Connection failed — retrying in ${seconds}s`;
+  if (livekitRetryTimer) clearTimeout(livekitRetryTimer);
+  livekitRetryTimer = setTimeout(connectLiveKit, delayMs);
+}
+
+// ════════════════════════════════════════════════════════════
+//  STATE WEBSOCKET — replaces HTTP polling (/state every 500ms)
+//  Server pushes instantly on every state change. Zero wasted requests.
+// ════════════════════════════════════════════════════════════
+let _stateWs = null;
+let _stateWsRetryTimer = null;
+
+function connectStateWs() {
+  // Clear any pending retry timer before attempting — prevents overlapping timers
+  if (_stateWsRetryTimer) { clearTimeout(_stateWsRetryTimer); _stateWsRetryTimer = null; }
+  if (_stateWs && (_stateWs.readyState === WebSocket.OPEN || _stateWs.readyState === WebSocket.CONNECTING)) return;
+  try {
+    const ws = new WebSocket('ws://127.0.0.1:5500/ws');
+    ws.onopen = () => {
+      _stateWs = ws;
+      _stateWsRetryDelay = 1000;  // reset backoff ONLY on confirmed open
+      console.log('[StateWS] connected');
+    };
+    ws.onmessage = (evt) => {
+      try {
+        const s = JSON.parse(evt.data);
+        if (s.connected) hideOverlay();
+        updateState(s);
+      } catch(e) {}
+    };
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      _stateWs = null;
+      // Reconnect with exponential backoff (1s → 2s → 4s → max 8s)
+      const delay = Math.min(8000, _stateWsRetryDelay);
+      _stateWsRetryDelay = Math.min(8000, _stateWsRetryDelay * 2);
+      _stateWsRetryTimer = setTimeout(connectStateWs, delay);
+    };
+  } catch(e) {
+    // WS not available (e.g. pywebview context) — fallback will handle it
+    const delay = Math.min(8000, _stateWsRetryDelay);
+    _stateWsRetryDelay = Math.min(8000, _stateWsRetryDelay * 2);
+    _stateWsRetryTimer = setTimeout(connectStateWs, delay);
+  }
+}
+let _stateWsRetryDelay = 1000;
+
+async function connectLiveKit() {
+  // Establish state push WebSocket immediately (replaces /state polling)
+  connectStateWs();
+
+  const backendMeta = document.querySelector('meta[name="voice-backend"]');
+  const voiceBackend = backendMeta ? backendMeta.content : 'livekit';
+  if (voiceBackend !== 'livekit') {
+    connMsg.textContent = 'Text mode ready';
+    hideOverlay();
+    updateState({ connected: false, speaking: false, listening: false, status: 'Text mode ready' });
+    return;
+  }
+
+  const urlMeta   = document.querySelector('meta[name="lk-url"]');
+  const tokenMeta = document.querySelector('meta[name="lk-token"]');
+
+  if (!urlMeta || !tokenMeta) {
+    connMsg.textContent = 'Waiting for agent…';
+    startPywebviewPolling();
+    return;
+  }
+
+  const lkUrl   = livekitBrowserUrl(urlMeta.content);
+  const lkToken = tokenMeta.content;
+
+if (!lkUrl || !lkToken || lkToken === 'PENDING') {
+    connMsg.textContent = 'Waiting for room token…';
+    setTimeout(connectLiveKit, 350);
+    return;
+  }
+
+  connMsg.textContent = 'Joining room…';
+
+  if (typeof LivekitClient === 'undefined') {
+    scheduleLiveKitRetry('client not loaded');
+    return;
+  }
+
+  if (window.room && window.room.state !== 'disconnected') {
+    try { await window.room.disconnect(); } catch (_) {}
+  }
+
+  window.room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+  const room = window.room;
+
+  room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+    if (track.kind === LivekitClient.Track.Kind.Audio) {
+      attachRemoteAudioTrack(track, publication);
+    }
+  });
+
+  room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+    participant.audioTrackPublications.forEach((pub) => {
+      if (pub.isSubscribed && pub.track) attachRemoteAudioTrack(pub.track, pub);
+    });
+  });
+
+  room.on(LivekitClient.RoomEvent.Connected, () => {
+    updateState({ connected: true, speaking: false, listening: false, status: 'Ready — say something!' });
+
+    unlockRoomAudio(room).then((ok) => {
+      if (ok) {
+        startBtn.style.display = 'none';
+        hideOverlay();
+      } else {
+        showAudioUnlock(room);
+      }
+      room.remoteParticipants.forEach((participant) => {
+        participant.audioTrackPublications.forEach((pub) => {
+          if (pub.isSubscribed && pub.track) attachRemoteAudioTrack(pub.track, pub);
+        });
+      });
+    });
+
+    room.remoteParticipants.forEach((participant) => {
+      participant.audioTrackPublications.forEach((pub) => {
+        if (pub.isSubscribed && pub.track) attachRemoteAudioTrack(pub.track, pub);
+      });
+    });
+  });
+
+  room.on(LivekitClient.RoomEvent.Disconnected, () => {
+    attachedAgentAudioKey = null;
+    attachedAgentAudioTrack = null;
+    updateState({ connected: false, speaking: false, listening: false, status: 'Disconnected' });
+  });
+
+  room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (speakers) => {
+    const localPId = room.localParticipant?.identity;
+    const agentSpeaking = speakers.some(p => p.identity !== localPId);
+    const userSpeaking  = speakers.some(p => p.identity === localPId);
+    if (agentSpeaking) {
+      agentSpeechActive = true;
+      updateState({ connected: true, speaking: true,  listening: false, status: 'Speaking…' });
+    } else if (userSpeaking) {
+      agentSpeechActive = false;
+      updateState({ connected: true, speaking: false, listening: true,  status: 'Listening…' });
+    } else {
+      agentSpeechActive = false;
+      updateState({ connected: true, speaking: false, listening: false, status: 'Ready' });
+    }
+  });
+
+  try {
+    await room.connect(lkUrl, lkToken);
+    livekitRetryCount = 0;
+  } catch (err) {
+    console.error('[livekit] Connection failed:', err);
+    scheduleLiveKitRetry(err?.message || err);
+    return;
+  }
+
+  try {
+    await room.localParticipant.setMicrophoneEnabled(true);
+  } catch (err) {
+    console.warn('[livekit] Microphone unavailable:', err);
+    updateState({ connected: true, speaking: false, listening: false, status: 'Mic permission needed' });
+    connMsg.textContent = 'Allow microphone access, then tap';
+    startBtn.style.display = 'block';
+    startBtn.onclick = async () => {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        startBtn.style.display = 'none';
+        hideOverlay();
+        updateState({ connected: true, speaking: false, listening: true, status: 'Listening…' });
+      } catch (e) {
+        connMsg.textContent = `Mic blocked — ${e?.message || 'check Chrome permission'}`;
+      }
+    };
+    return;
+  }
+
+  await unlockRoomAudio(room);
+}
+
+// ════════════════════════════════════════════════════════════
+//  PYWEBVIEW FALLBACK (only if WS not available)
+// ════════════════════════════════════════════════════════════
+function startPywebviewPolling() {
+  // Try WS first; fall back to pywebview polling only if WS stays disconnected
+  connectStateWs();
+  const wsCheckTimer = setTimeout(() => {
+    if (!_stateWs || _stateWs.readyState !== WebSocket.OPEN) {
+      // WS didn't connect — fall back to pywebview API polling
+      async function poll() {
+        try {
+          const raw = await window.pywebview.api.get_state();
+          const s   = JSON.parse(raw);
+          if (s.connected) hideOverlay();
+          updateState(s);
+        } catch(e) {}
+      }
+      setInterval(poll, 500);
+    }
+  }, 800);
+  setTimeout(hideOverlay, 1800);
+}
+
+// ════════════════════════════════════════════════════════════
+//  QUIT
+// ════════════════════════════════════════════════════════════
+async function quit() {
+  try { await window.pywebview.api.quit(); }
+  catch(e) { window.close(); }
+}
+
+// ════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  initAvatar();                  
+  setTimeout(connectLiveKit, 120);
+});
+
+// ════════════════════════════════════════════════════════════
+//  TEXT PANEL
+// ════════════════════════════════════════════════════════════
+const panel   = document.getElementById('text-panel');
+const toggle  = document.getElementById('panel-toggle');
+const history = document.getElementById('chat-history');
+const input   = document.getElementById('msg-input');
+const photoFile = document.getElementById('photo-file');
+const photoBtn  = document.getElementById('photo-btn');
+const docFile = document.getElementById('doc-file');
+const docBtn  = document.getElementById('doc-btn');
+const sendBtn = document.getElementById('send-btn');
+let panelOpen = false;
+
+function togglePanel() {
+  panelOpen = !panelOpen;
+  panel.classList.toggle('open', panelOpen);
+  toggle.classList.toggle('active', panelOpen);
+  if (panelOpen) setTimeout(() => input.focus(), 350);
+}
+
+function escapeHtml(text) {
+  return String(text || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function inlineMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+function renderMarkdown(md) {
+  const lines = String(md || '').replace(/\r/g, '').split('\n');
+  const out = [];
+  let inList = false;
+  let inCode = false;
+  let codeLines = [];
+
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      if (inCode) {
+        out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+        codeLines = [];
+        inCode = false;
+      } else {
+        closeList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeLines.push(line); continue; }
+
+    const trimmed = line.trim();
+    if (!trimmed) { closeList(); continue; }
+    if (trimmed.startsWith('# ')) {
+      closeList();
+      out.push(`<span class="md-h1">${inlineMarkdown(trimmed.slice(2))}</span>`);
+    } else if (trimmed.startsWith('## ')) {
+      closeList();
+      out.push(`<span class="md-h2">${inlineMarkdown(trimmed.slice(3))}</span>`);
+    } else if (/^[-*]\s+/.test(trimmed)) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push(`<li>${inlineMarkdown(trimmed.replace(/^[-*]\s+/, ''))}</li>`);
+    } else if (/^\d+\.\s+/.test(trimmed)) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push(`<li>${inlineMarkdown(trimmed.replace(/^\d+\.\s+/, ''))}</li>`);
+    } else {
+      closeList();
+      out.push(`<p>${inlineMarkdown(trimmed)}</p>`);
+    }
+  }
+  closeList();
+  if (inCode) out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+  return out.join('');
+}
+
+function addBubble(text, role) {
+  const row = document.createElement('div');
+  row.className = `msg-row ${role}`;
+  const bub = document.createElement('div');
+  bub.className = `bubble ${role === 'user' ? 'user-bubble' : 'vani-bubble'}`;
+  if (role === 'vani') bub.innerHTML = renderMarkdown(text);
+  else bub.textContent = text;
+  row.appendChild(bub);
+  history.appendChild(row);
+  history.scrollTop = history.scrollHeight;
+  return bub;
+}
+
+function addThinking() {
+  const row = document.createElement('div');
+  row.className = 'msg-row vani';
+  const bub = document.createElement('div');
+  bub.className = 'bubble vani-bubble thinking';
+  bub.textContent = 'Soch rahi hoon…';
+  row.appendChild(bub);
+  history.appendChild(row);
+  history.scrollTop = history.scrollHeight;
+  return row;
+}
+
+async function sendMessage() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  sendBtn.disabled = true;
+  addBubble(text, 'user');
+  const thinkRow = addThinking();
+
+  try {
+    const resp = await fetch('http://127.0.0.1:5500/send_text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text })
+    });
+    const data = await resp.json();
+    thinkRow.remove();
+    addBubble(data.reply || '✅ Ho gaya!', 'vani');
+    if (!data.spoken) {
+      speakBrowserFallback(data.reply || 'Ho gaya.', { limit: 900 });
+    }
+    setAvatarState('listening');   
+  } catch(e) {
+    thinkRow.remove();
+    addBubble('❌ Connection error — Vani agent running hai?', 'vani');
+    setAvatarState('listening');
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+function chooseDocument() {
+  if (!panelOpen) togglePanel();
+  docFile.value = '';
+  docFile.click();
+}
+
+function choosePhoto() {
+  if (!panelOpen) togglePanel();
+  photoFile.value = '';
+  photoFile.click();
+}
+
+photoFile.addEventListener('change', async () => {
+  const file = photoFile.files && photoFile.files[0];
+  if (!file) return;
+
+  const prompt = input.value.trim();
+  input.value = '';
+  photoBtn.disabled = true;
+  docBtn.disabled = true;
+  sendBtn.disabled = true;
+  addBubble(`Review ${file.name}${prompt ? ` — ${prompt}` : ' — honest rating and useful feedback'}`, 'user');
+  speakBrowserFallback('Image mil gayi. Dekh rahi hoon.', { limit: 0 });
+  const thinkRow = addThinking();
+
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('prompt', prompt);
+    const resp = await fetch('http://127.0.0.1:5500/analyze_image', {
+      method: 'POST',
+      body: form
+    });
+    const data = await resp.json();
+    thinkRow.remove();
+    addBubble(data.reply || 'Image review ho gaya.', 'vani');
+    speakBrowserFallback(data.reply || 'Image review ho gaya.', { limit: 1400 });
+    setAvatarState('listening');
+  } catch(e) {
+    thinkRow.remove();
+    addBubble('❌ Image upload/review failed — Vani agent running hai?', 'vani');
+    setAvatarState('listening');
+  } finally {
+    photoBtn.disabled = false;
+    docBtn.disabled = false;
+    sendBtn.disabled = false;
+  }
+});
+
+docFile.addEventListener('change', async () => {
+  const file = docFile.files && docFile.files[0];
+  if (!file) return;
+
+  const prompt = input.value.trim();
+  input.value = '';
+  photoBtn.disabled = true;
+  docBtn.disabled = true;
+  sendBtn.disabled = true;
+  addBubble(`Learn ${file.name}${prompt ? ` — ${prompt}` : ' — go deep and remember it'}`, 'user');
+  const thinkRow = addThinking();
+
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('prompt', prompt);
+    const resp = await fetch('http://127.0.0.1:5500/analyze_document', {
+      method: 'POST',
+      body: form
+    });
+    const data = await resp.json();
+    thinkRow.remove();
+    addBubble(data.reply || 'Document read ho gaya.', 'vani');
+    // No browser TTS here — Realtime Gemini will speak the ack via generate_reply
+    setAvatarState('listening');
+  } catch(e) {
+    thinkRow.remove();
+    addBubble('❌ Document upload/read failed — Vani agent running hai?', 'vani');
+    setAvatarState('listening');
+  } finally {
+    photoBtn.disabled = false;
+    docBtn.disabled = false;
+    sendBtn.disabled = false;
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+//  DOCUMENT MEMORY BADGE — status poll + clear
+// ═══════════════════════════════════════════════════════
+
+const docBadge = document.getElementById('doc-badge');
+
+async function refreshDocBadge() {
+  try {
+    const resp = await fetch('http://127.0.0.1:5500/document_status');
+    if (!resp.ok) return;
+    const s = await resp.json();
+    if (s.present && !s.expired) {
+      const name = s.filename || 'document';
+      const short = name.length > 16 ? name.slice(0, 14) + '…' : name;
+      docBadge.textContent = '📚 ' + short + ' ✕';
+      docBadge.title = name + ' loaded — click to clear';
+      docBadge.style.display = 'inline';
+    } else {
+      docBadge.style.display = 'none';
+    }
+  } catch(e) {
+    docBadge.style.display = 'none';
+  }
+}
+
+async function clearDocument() {
+  if (!confirm("Remove this document from Vani memory?")) return;
+  try {
+    await fetch('http://127.0.0.1:5500/clear_document', { method: 'POST' });
+    docBadge.style.display = 'none';
+    addBubble('Document memory clear ho gaya. Ab main isse nahi jaanta.', 'vani');
+  } catch(e) {}
+}
+
+// Poll every 30s and on load
+refreshDocBadge();
+setInterval(refreshDocBadge, 30000);
+
+// After a successful doc upload, refresh badge
+docFile.addEventListener('change', () => {
+  setTimeout(refreshDocBadge, 3000);
+});
+</script>
+</body>
+</html>

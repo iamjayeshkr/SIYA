@@ -1,0 +1,10 @@
+# Vani OS — P1 dependencies
+# pip install -r requirements-p1.txt
+
+# Async HTTP (for Ollama embed + ingestion calls)
+aiohttp>=3.9.0
+
+# sqlite-vec for fast ANN vector search
+# If install fails on your platform, semantic memory falls back to brute-force cosine
+# (still works, just slower on large memory sets)
+sqlite-vec>=0.1.6

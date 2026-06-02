@@ -1,0 +1,21 @@
+# Vani OS — P2 dependencies
+# pip install -r requirements-p2.txt
+
+# Async HTTP (model router API calls — likely already installed from P1)
+aiohttp>=3.9.0
+
+# Local Whisper STT (CTranslate2-based, fast CPU/GPU)
+faster-whisper>=1.0.0
+
+# Microphone capture for offline fallback path
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# ── Optional but recommended ──────────────────────────────────────────────────
+# Piper TTS binary is installed separately (not a pip package):
+# macOS:  brew install piper-tts   (or download from GitHub releases)
+# Linux:  https://github.com/rhasspy/piper/releases
+#
+# After install, pull a voice model:
+# piper --download-dir ~/.local/share/piper-voices \
+#       --model en_US-lessac-medium
