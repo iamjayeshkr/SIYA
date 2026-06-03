@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.vani.os",
   "build": {
-    "beforeDevCommand": "cd ui && npm install --silent && npm run dev",
+    "beforeDevCommand": "",
     "beforeBuildCommand": "",
     "devUrl": "http://127.0.0.1:5500/ui",
     "frontendDist": "http://127.0.0.1:5500/ui"

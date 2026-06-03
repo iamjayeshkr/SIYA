@@ -230,6 +230,7 @@ fn quit_app(app: AppHandle, state: State<'_, AppState>) {
         let s = state.lock().unwrap();
         save_persisted(&s.persisted);
     }
+    kill_python_backend();
     app.exit(0);
 }
 
@@ -370,12 +371,150 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let state: State<AppState> = app.state();
                 let s = state.lock().unwrap();
                 save_persisted(&s.persisted);
+                kill_python_backend();
                 app.exit(0);
             }
             _ => {}
         })
         .build(app)?;
     Ok(())
+}
+
+// ── Python Backend Spawner ────────────────────────────────────────────────────
+//
+// Finds the venv Python next to the .app bundle (or dev project root) and
+// launches `python -m vani.launcher` exactly like start.sh does.
+
+static BACKEND_PID: std::sync::OnceLock<std::sync::Mutex<Option<u32>>> =
+    std::sync::OnceLock::new();
+
+fn project_root() -> std::path::PathBuf {
+    let exe = std::env::current_exe().unwrap_or_default();
+
+    // ── Bundled .app: read path hint written by build_dmg.sh ─────────────────
+    // Vani.app/Contents/MacOS/vani  (exe)
+    //          Contents/Resources/vani_backend_path.txt  -> absolute path to backend/
+    //          Contents/Resources/backend/               (fallback if hint missing)
+    if let Some(macos_dir) = exe.parent() {
+        if let Some(contents_dir) = macos_dir.parent() {
+            // Try hint file first (most reliable)
+            let hint = contents_dir.join("Resources").join("vani_backend_path.txt");
+            if hint.exists() {
+                if let Ok(path_str) = std::fs::read_to_string(&hint) {
+                    let p = std::path::PathBuf::from(path_str.trim());
+                    if p.join("src").join("vani").exists() {
+                        eprintln!("[vani] project_root (hint): {}", p.display());
+                        return p;
+                    }
+                }
+            }
+            // Direct embedded path fallback
+            let embedded = contents_dir.join("Resources").join("backend");
+            if embedded.join("src").join("vani").exists() {
+                eprintln!("[vani] project_root (embedded): {}", embedded.display());
+                return embedded;
+            }
+        }
+    }
+
+    // ── Dev mode (cargo run): climb up from exe until src/vani found ─────────
+    let mut dir = exe.parent().unwrap_or(&exe).to_path_buf();
+    for _ in 0..10 {
+        if dir.join("src").join("vani").exists() {
+            eprintln!("[vani] project_root (dev): {}", dir.display());
+            return dir;
+        }
+        if let Some(p) = dir.parent() { dir = p.to_path_buf(); } else { break; }
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    eprintln!("[vani] project_root (cwd fallback): {}", cwd.display());
+    cwd
+}
+
+fn find_venv_python(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    for candidate in &["venv311_new/bin/python", "venv311/bin/python", ".venv/bin/python"] {
+        let p = root.join(candidate);
+        if p.exists() { return Some(p); }
+    }
+    None
+}
+
+fn spawn_python_backend() {
+    BACKEND_PID.get_or_init(|| std::sync::Mutex::new(None));
+    std::thread::spawn(|| {
+        let root   = project_root();
+        let python = match find_venv_python(&root) {
+            Some(p) => p,
+            None => {
+                eprintln!("[vani] No Python venv found. Expected venv311_new/, venv311/ or .venv/ beside Vani.app");
+                return;
+            }
+        };
+
+        let src_path = root.join("src");
+        let mut pypath = src_path.to_string_lossy().to_string();
+        if let Ok(existing) = std::env::var("PYTHONPATH") {
+            pypath = format!("{}:{}", pypath, existing);
+        }
+
+        let mut cmd = std::process::Command::new(&python);
+        cmd.args(["-m", "vani.launcher"])
+           .current_dir(&root)
+           .env("PYTHONPATH", &pypath)
+           .env("PYTHONUNBUFFERED", "1");
+
+        // Inline-parse .env so API keys reach the subprocess
+        let dotenv_path = root.join(".env");
+        if dotenv_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&dotenv_path) {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') { continue; }
+                    if let Some((k, v)) = line.split_once('=') {
+                        let k = k.trim();
+                        let v = v.trim().trim_matches('"').trim_matches('\'');
+                        if !k.is_empty() { cmd.env(k, v); }
+                    }
+                }
+            }
+        }
+
+        // Write stdout + stderr to ~/Library/Logs/vani_backend.log
+        let log_path = dirs_next::home_dir()
+            .unwrap_or_default()
+            .join("Library/Logs/vani_backend.log");
+        if let Ok(log) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            use std::os::unix::io::IntoRawFd;
+            let fd = log.into_raw_fd();
+            unsafe {
+                use std::os::unix::io::FromRawFd;
+                cmd.stdout(std::process::Stdio::from_raw_fd(fd));
+                cmd.stderr(std::process::Stdio::from_raw_fd(libc::dup(fd)));
+            }
+        }
+
+        match cmd.spawn() {
+            Ok(child) => {
+                let pid = child.id();
+                if let Some(lock) = BACKEND_PID.get() {
+                    *lock.lock().unwrap() = Some(pid);
+                }
+                eprintln!("[vani] Python backend started (PID {}). Logs: {:?}", pid, log_path);
+            }
+            Err(e) => eprintln!("[vani] Failed to start Python backend: {}", e),
+        }
+    });
+}
+
+fn kill_python_backend() {
+    if let Some(lock) = BACKEND_PID.get() {
+        if let Some(pid) = *lock.lock().unwrap() {
+            #[cfg(unix)]
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM); }
+            eprintln!("[vani] Python backend stopped (PID {}).", pid);
+        }
+    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -398,25 +537,70 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .manage(app_state)
         .setup(move |app| {
+            // ── Boot Python backend (same as start.sh) ────────────────────
+            spawn_python_backend();
+
             build_tray(app.handle())?;
 
-            // Restore window position
-            {
-                let state: State<AppState> = app.handle().state();
-                let s = state.lock().unwrap();
-                if s.persisted.window_x >= 0 && s.persisted.window_y >= 0 {
-                    if let Some(window) = app.get_webview_window("main") {
+            // ── Keep window hidden until Python backend is ready on port 5500.
+            // devUrl is http://127.0.0.1:5500/ui — Tauri loads it directly.
+            // We hide the window so the user never sees a blank webview while
+            // Python boots. Once 5500/ui returns HTTP 200 we reload and show.
+            // IMPORTANT: no window.location.href — that breaks CSP and mic perms.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+
+                // Restore saved position while still hidden
+                {
+                    let state: State<AppState> = app.handle().state();
+                    let s = state.lock().unwrap();
+                    if s.persisted.window_x >= 0 && s.persisted.window_y >= 0 {
                         let _ = window.set_position(tauri::PhysicalPosition::new(
                             s.persisted.window_x,
                             s.persisted.window_y,
                         ));
                     }
                 }
-                if !s.persisted.window_visible {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.hide();
-                    }
-                }
+
+                let win_handle = window.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("wait-for-backend runtime");
+
+                    rt.block_on(async move {
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(2))
+                            .build()
+                            .unwrap();
+
+                        let mut attempts = 0u32;
+                        loop {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
+                            attempts += 1;
+
+                            if let Ok(resp) = client.get("http://127.0.0.1:5500/ui").send().await {
+                                if resp.status().is_success() {
+                                    eprintln!("[vani] Backend ready after {} attempts — reloading and showing window", attempts);
+                                    // Reload so Tauri fetches the real patched HTML with LiveKit tokens.
+                                    // Reload keeps the same origin (5500/ui) — no CSP/mic-permission breakage.
+                                    let _ = win_handle.eval("window.location.reload();");
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                    let _ = win_handle.show();
+                                    let _ = win_handle.set_focus();
+                                    return;
+                                }
+                            }
+
+                            if attempts >= 150 {
+                                eprintln!("[vani] Backend did not start in 90s — showing window anyway");
+                                let _ = win_handle.show();
+                                return;
+                            }
+                        }
+                    });
+                });
             }
 
             // Start wake word listener in its own thread+runtime
