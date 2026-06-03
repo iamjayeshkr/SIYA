@@ -118,14 +118,8 @@ async def _qwen_decide_and_run(query: str) -> str:
     global _ollama_semaphore, _ollama_semaphore_loop
     logger.info(f"[ROUTER] Raw: {query}")
 
-    # Instant filler — fires before Ollama, kills perceived silence
-    try:
-        import random
-        from vani.reasoning.worker import say_to_user
-        _FILLERS = ["Hmm...", "Haan...", "Ek second.", "Dekh rahi hoon.", "Soch rahi hoon."]
-        asyncio.create_task(say_to_user(random.choice(_FILLERS), limit=None))
-    except Exception:
-        pass
+    # Instant filler — skip in text mode (no realtime session active)
+    pass
 
     try:
         from vani.memory.working_memory import answer_memory_query, record_user_signal

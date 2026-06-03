@@ -78,15 +78,27 @@ export default function App() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [msgs, thinking]);
 
+  // P4: streaming state
+  const [streamingId, setStreamingId] = useState<string | null>(null);
+
   const sendMsg = useCallback(async (text: string) => {
     if (!text.trim()) return;
     setInput("");
     const userMsg: Msg = { id:uid(), role:"user", text, ts:Date.now() };
     setMsgs(p => [...p, userMsg]);
     setThinking(true);
+
     try {
-      const res = await tauriInvoke("send_query", { query: text }, MOCK_REPLY);
-      const aMsg: Msg = { id:uid(), role:"assistant", text:(res as typeof MOCK_REPLY).text, model:(res as typeof MOCK_REPLY).model_used, ts:Date.now(), tool_calls:(res as typeof MOCK_REPLY).tool_calls };
+      const resp = await fetch("http://127.0.0.1:5500/send_text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      const data = await resp.json();
+      const aMsg: Msg = { id:uid(), role:"assistant", text: data.reply || "Ho gaya!", ts:Date.now() };
+      setMsgs(p => [...p, aMsg]);
+    } catch(e) {
+      const aMsg: Msg = { id:uid(), role:"assistant", text:"❌ Connection error — Vani agent running hai?", ts:Date.now() };
       setMsgs(p => [...p, aMsg]);
     } finally { setThinking(false); }
   }, []);
@@ -144,7 +156,7 @@ export default function App() {
                   {m.role === "assistant" && <div style={S.avatar}>V</div>}
                   <div style={{ maxWidth:"72%" }}>
                     <div style={{ ...S.bubble, ...(m.role==="user" ? S.bubbleUser : S.bubbleBot) }}>
-                      {m.text}
+                      {m.text}{streamingId === m.id && <span className="stream-cursor">▍</span>}
                     </div>
                     {m.tool_calls && m.tool_calls.length > 0 && (
                       <div style={S.toolCallRow}>
@@ -323,9 +335,11 @@ export default function App() {
         @keyframes blink { 0%,100%{opacity:0.2} 50%{opacity:1} }
         @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(167,139,250,0.4)} 50%{box-shadow:0 0 0 8px rgba(167,139,250,0)} }
         @keyframes orb { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+        @keyframes cursor-blink { 0%,100%{opacity:1} 50%{opacity:0} }
         .dots span:nth-child(1){animation:blink 1.2s .0s infinite}
         .dots span:nth-child(2){animation:blink 1.2s .2s infinite}
         .dots span:nth-child(3){animation:blink 1.2s .4s infinite}
+        .stream-cursor{animation:cursor-blink 0.7s infinite;color:#a78bfa;}
       `}</style>
     </div>
   );

@@ -30,6 +30,25 @@ from vani.reasoning.screen import _is_screen_intent as _is_screen_read_intent
 from vani.browser.search import classify_hinglish_question_as_search as _classify_hinglish_search
 
 
+# ── Teach/Learn intent pattern ────────────────────────────────────────────────
+# Triggers Vanni's visual teaching mode.
+# Matches: "teach me X", "explain X", "samjhao X", "padha X", "what is X",
+#          "how does X work", "diagram of X", "flowchart of X", "sikha X"
+#          "mujhe X samajhna hai", "X kya hota hai", "X ka concept"
+_TEACH_RE = re.compile(
+    r"(?:"
+    r"(?:teach|explain|describe|define|summarize)\s+(?:me\s+)?(?:about\s+)?"
+    r"|(?:samjhao|samjha|padha|padh|sikha|sikho|bata|batao)\s+(?:mujhe\s+)?"
+    r"|(?:mujhe|mujhe)\s+.{0,30}(?:samajhna|seekhna|pata|jaanna)\s*(?:hai|he)?"
+    r"|(?:what\s+is|what\s+are|what\s+was|who\s+is|who\s+was|how\s+does|how\s+do|why\s+is|why\s+does)\s+"
+    r"|(?:kya\s+hai|kya\s+hota|kaise\s+kaam|kaise\s+hota|kyun\s+hota)\s+"
+    r"|(?:diagram|flowchart|mindmap|timeline|visual)\s+(?:of|for|banao|bana|dikhao)\s+"
+    r"|(?:concept\s+of|theory\s+of|meaning\s+of|definition\s+of)\s+"
+    r"|(?:X\s+)?(?:ka|ki|ke)\s+concept\s*(?:kya|batao|samjhao)?"
+    r")",
+    re.IGNORECASE,
+)
+
 _STUDY_START_RE = __import__("re").compile(
     r"(study.*(shuru|start|karte|chalao|lagao)|padhai.*(shuru|start|karte|lagao)|"
     r"focus.*(mode|on|karo|shuru)|pomodoro.*(start|shuru|lagao)|\b(study session|padhai session)\b|"
@@ -294,6 +313,12 @@ def _router_classify(query: str):
     hinglish_q = _classify_hinglish_search(q)
     if hinglish_q:
         return "GOOGLE_SEARCH", hinglish_q
+
+    # ── Teach intent — must come AFTER search/browser classifiers ────────────
+    # Only fires when no other intent matched, preventing "what is the weather"
+    # from being swallowed by teach mode instead of SEARCH_WEATHER.
+    if _TEACH_RE.search(q):
+        return "TEACH", {"query": q}
 
     return None, None
 
@@ -645,3 +670,16 @@ async def _dispatch_intent(intent: str, data, query: str) -> str:
         if "OPENED" in result or "SEARCH_DONE" in result:
             return f"✅ '{contact}' (@{username}) ka Instagram profile khul gaya."
         return f"❌ Instagram profile nahi khula: {result}"
+
+    elif intent == "TEACH":
+        from vani.reasoning.teaching_tool import TeachingEngine, build_visual_lesson
+        engine = TeachingEngine()
+        query = data.get("query", "") if isinstance(data, dict) else str(data)
+        lesson = build_visual_lesson(engine, query)
+        # Fire visual panel in browser UI via websocket/IPC signal
+        try:
+            from vani.ui.teach_bridge import send_teach_visual
+            await send_teach_visual(lesson)
+        except Exception:
+            pass  # UI bridge optional — lesson spoken regardless
+        return lesson.get("spoken_response", f"{query} ke baare mein samjhate hain!")

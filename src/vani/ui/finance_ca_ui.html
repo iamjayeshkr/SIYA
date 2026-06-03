@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vani Finance CA</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;600;700&family=Exo+2:ital,wght@0,200;0,300;0,400;1,200&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #03030a;
+  --surface:   #0a0a18;
+  --card:      #0f0f22;
+  --accent:    #c47eff;
+  --accent2:   #7c3aed;
+  --gold:      #f5c842;
+  --gold2:     #d4a017;
+  --green:     #4ade80;
+  --red:       #f87171;
+  --blue:      #60a5fa;
+  --glow:      rgba(196, 126, 255, 0.18);
+  --gold-glow: rgba(245, 200, 66, 0.15);
+  --text:      #f0eaff;
+  --muted:     #6b5f80;
+  --rim:       rgba(196,126,255,0.12);
+  --rim-gold:  rgba(245,200,66,0.2);
+  --font-main: 'Exo 2', sans-serif;
+  --font-mono: 'Space Mono', monospace;
+  --font-head: 'Rajdhani', sans-serif;
+}
+
+html, body {
+  width: 100%; min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-main);
+  overflow-x: hidden;
+}
+
+/* ─── Background ─────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: -1;
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(124,58,237,0.12) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 35% at 80% 90%, rgba(245,200,66,0.06) 0%, transparent 70%),
+    radial-gradient(ellipse 30% 30% at 50% 50%, rgba(196,126,255,0.04) 0%, transparent 60%);
+}
+
+/* ─── Header ─────────────────────────────────── */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 32px 16px;
+  border-bottom: 1px solid var(--rim);
+  background: rgba(10,10,24,0.8);
+  backdrop-filter: blur(12px);
+  position: sticky; top: 0; z-index: 100;
+}
+
+.logo {
+  display: flex; align-items: center; gap: 12px;
+}
+
+.logo-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent2), var(--accent));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; box-shadow: 0 0 20px var(--glow);
+}
+
+.logo-text {
+  font-family: var(--font-head);
+  font-size: 22px; font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 2px;
+}
+
+.logo-sub {
+  font-size: 11px; color: var(--gold); letter-spacing: 3px;
+  text-transform: uppercase; margin-top: -2px;
+}
+
+.status-badge {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 20px;
+  background: rgba(74,222,128,0.08);
+  border: 1px solid rgba(74,222,128,0.2);
+  font-size: 12px; color: var(--green);
+}
+
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+  animation: pulse-dot 2s infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ─── Tabs ────────────────────────────────────── */
+.tabs {
+  display: flex; gap: 0; padding: 0 32px;
+  background: rgba(10,10,24,0.6);
+  border-bottom: 1px solid var(--rim);
+  overflow-x: auto;
+}
+
+.tab {
+  padding: 14px 22px; cursor: pointer;
+  font-family: var(--font-head); font-size: 14px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); border-bottom: 2px solid transparent;
+  transition: all 0.2s; white-space: nowrap;
+}
+
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+/* ─── Main layout ────────────────────────────── */
+.main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
+
+.panel { display: none; }
+.panel.active { display: block; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+/* ─── Chat Panel ─────────────────────────────── */
+.chat-layout { display: grid; grid-template-columns: 1fr 300px; gap: 20px; height: calc(100vh - 200px); }
+.chat-col { display: flex; flex-direction: column; }
+
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 16px;
+  background: var(--card); border-radius: 16px;
+  border: 1px solid var(--rim);
+  display: flex; flex-direction: column; gap: 14px;
+  scroll-behavior: smooth;
+}
+
+.chat-messages::-webkit-scrollbar { width: 4px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: var(--rim); border-radius: 2px; }
+
+.msg { max-width: 82%; animation: msgIn 0.3s ease; }
+@keyframes msgIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+.msg.user { align-self: flex-end; }
+.msg.ai { align-self: flex-start; }
+
+.msg-bubble {
+  padding: 12px 16px; border-radius: 16px;
+  line-height: 1.6; font-size: 14px;
+}
+
+.msg.user .msg-bubble {
+  background: linear-gradient(135deg, var(--accent2), rgba(196,126,255,0.6));
+  border-bottom-right-radius: 4px;
+}
+
+.msg.ai .msg-bubble {
+  background: rgba(196,126,255,0.06);
+  border: 1px solid var(--rim);
+  border-bottom-left-radius: 4px;
+}
+
+.msg-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; letter-spacing: 1px; }
+.msg.user .msg-label { text-align: right; }
+
+.chat-input-row {
+  display: flex; gap: 10px; margin-top: 14px;
+}
+
+.chat-input {
+  flex: 1; padding: 14px 18px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--rim);
+  color: var(--text); font-family: var(--font-main); font-size: 14px;
+  outline: none; transition: border-color 0.2s;
+  resize: none; height: 52px;
+}
+
+.chat-input:focus { border-color: var(--accent); }
+.chat-input::placeholder { color: var(--muted); }
+
+.send-btn {
+  padding: 0 22px; border-radius: 12px; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent2), var(--accent));
+  border: none; color: white;
+  font-family: var(--font-head); font-size: 15px; font-weight: 700;
+  letter-spacing: 1px; transition: all 0.2s;
+  box-shadow: 0 0 16px var(--glow);
+}
+
+.send-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 24px var(--glow); }
+.send-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* Quick prompts sidebar */
+.quick-prompts { display: flex; flex-direction: column; gap: 8px; }
+
+.quick-prompt-title {
+  font-family: var(--font-head); font-size: 13px; font-weight: 600;
+  color: var(--gold); letter-spacing: 2px; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.qp-btn {
+  padding: 10px 14px; border-radius: 10px; cursor: pointer;
+  background: rgba(245,200,66,0.04);
+  border: 1px solid var(--rim-gold);
+  color: var(--text); font-size: 12px;
+  text-align: left; transition: all 0.2s;
+  line-height: 1.4;
+}
+
+.qp-btn:hover {
+  background: rgba(245,200,66,0.08);
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+/* ─── Calculator Panel ───────────────────────── */
+.calc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+.calc-card {
+  background: var(--card); border-radius: 16px;
+  border: 1px solid var(--rim);
+  padding: 24px; transition: border-color 0.2s;
+}
+
+.calc-card:hover { border-color: var(--rim-gold); }
+
+.calc-title {
+  font-family: var(--font-head); font-size: 18px; font-weight: 700;
+  color: var(--gold); margin-bottom: 20px; letter-spacing: 1px;
+  display: flex; align-items: center; gap: 10px;
+}
+
+.field-group { margin-bottom: 16px; }
+.field-label { font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 1.5px; margin-bottom: 6px; }
+
+.field-input {
+  width: 100%; padding: 10px 14px; border-radius: 10px;
+  background: rgba(196,126,255,0.04);
+  border: 1px solid var(--rim);
+  color: var(--text); font-family: var(--font-mono); font-size: 14px;
+  outline: none; transition: border-color 0.2s;
+}
+
+.field-input:focus { border-color: var(--accent); }
+
+.calc-btn {
+  width: 100%; padding: 12px; border-radius: 10px; cursor: pointer;
+  background: linear-gradient(135deg, rgba(245,200,66,0.15), rgba(245,200,66,0.05));
+  border: 1px solid var(--rim-gold);
+  color: var(--gold); font-family: var(--font-head);
+  font-size: 15px; font-weight: 700; letter-spacing: 1.5px;
+  margin-top: 8px; transition: all 0.2s;
+}
+
+.calc-btn:hover { background: rgba(245,200,66,0.12); box-shadow: 0 0 20px var(--gold-glow); }
+
+.result-box {
+  margin-top: 16px; padding: 16px;
+  background: rgba(74,222,128,0.04);
+  border: 1px solid rgba(74,222,128,0.15);
+  border-radius: 12px; display: none;
+}
+
+.result-box.show { display: block; animation: fadeIn 0.3s ease; }
+
+.result-row {
+  display: flex; justify-content: space-between;
+  padding: 6px 0; font-size: 13px;
+  border-bottom: 1px solid rgba(196,126,255,0.06);
+}
+
+.result-row:last-child { border-bottom: none; }
+.result-row .label { color: var(--muted); }
+.result-row .value { font-family: var(--font-mono); color: var(--green); font-weight: 700; }
+.result-row.highlight .value { color: var(--gold); font-size: 15px; }
+
+/* ─── Tax Panel ──────────────────────────────── */
+.tax-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+.slab-table { width: 100%; border-collapse: collapse; }
+.slab-table th, .slab-table td {
+  padding: 10px 14px; text-align: left; font-size: 13px;
+}
+
+.slab-table th {
+  background: rgba(196,126,255,0.06);
+  color: var(--muted); font-family: var(--font-head);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+  border-bottom: 1px solid var(--rim);
+}
+
+.slab-table td { border-bottom: 1px solid rgba(196,126,255,0.04); }
+.slab-table tr:hover td { background: rgba(196,126,255,0.03); }
+.slab-table .rate-nil { color: var(--green); }
+.slab-table .rate-low { color: var(--blue); }
+.slab-table .rate-mid { color: var(--gold); }
+.slab-table .rate-high { color: var(--red); }
+
+.regime-toggle {
+  display: flex; gap: 0; margin-bottom: 20px;
+  background: var(--surface); border-radius: 10px; padding: 4px;
+  width: fit-content;
+}
+
+.regime-btn {
+  padding: 8px 20px; border-radius: 8px; cursor: pointer;
+  font-family: var(--font-head); font-size: 13px; font-weight: 600;
+  color: var(--muted); border: none; background: transparent;
+  transition: all 0.2s; letter-spacing: 1px;
+}
+
+.regime-btn.active { background: var(--card); color: var(--gold);
+  box-shadow: 0 0 12px var(--gold-glow); }
+
+/* Tax estimate */
+.tax-estimate-box {
+  background: var(--card); border-radius: 16px;
+  border: 1px solid var(--rim); padding: 24px;
+}
+
+/* ─── Investments Panel ──────────────────────── */
+.invest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+
+.invest-card {
+  background: var(--card); border-radius: 14px;
+  border: 1px solid var(--rim); padding: 20px;
+  position: relative; overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.invest-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+}
+
+.invest-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.invest-card.gold::before { background: linear-gradient(90deg, var(--gold2), var(--gold)); }
+.invest-card.green::before { background: linear-gradient(90deg, #16a34a, var(--green)); }
+.invest-card.blue::before { background: linear-gradient(90deg, #1d4ed8, var(--blue)); }
+.invest-card.red::before { background: linear-gradient(90deg, #dc2626, var(--red)); }
+
+.invest-name {
+  font-family: var(--font-head); font-size: 17px; font-weight: 700;
+  color: var(--text); letter-spacing: 0.5px;
+}
+
+.invest-full { font-size: 11px; color: var(--muted); margin-bottom: 14px; }
+
+.invest-meta { display: flex; flex-direction: column; gap: 8px; }
+
+.invest-row { display: flex; justify-content: space-between; font-size: 12px; }
+.invest-row .k { color: var(--muted); }
+.invest-row .v { font-weight: 600; }
+.risk-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 20px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+}
+
+.risk-high { background: rgba(248,113,113,0.1); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
+.risk-med { background: rgba(245,200,66,0.08); color: var(--gold); border: 1px solid rgba(245,200,66,0.2); }
+.risk-low { background: rgba(74,222,128,0.08); color: var(--green); border: 1px solid rgba(74,222,128,0.2); }
+.risk-zero { background: rgba(96,165,250,0.08); color: var(--blue); border: 1px solid rgba(96,165,250,0.2); }
+
+/* ─── Compliance Panel ───────────────────────── */
+.calendar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+
+.deadline-card {
+  background: var(--card); border-radius: 14px;
+  border: 1px solid var(--rim); padding: 20px;
+}
+
+.deadline-header {
+  font-family: var(--font-head); font-size: 15px; font-weight: 700;
+  color: var(--gold); letter-spacing: 1.5px; text-transform: uppercase;
+  margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+}
+
+.deadline-item {
+  display: flex; gap: 14px; padding: 10px 0;
+  border-bottom: 1px solid rgba(196,126,255,0.05);
+}
+
+.deadline-item:last-child { border-bottom: none; }
+
+.deadline-date {
+  min-width: 90px; font-family: var(--font-mono);
+  font-size: 12px; color: var(--accent); font-weight: 700;
+}
+
+.deadline-desc { font-size: 13px; color: var(--text); line-height: 1.4; }
+
+/* ─── Ratios Panel ───────────────────────────── */
+.ratio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+
+.ratio-card {
+  background: var(--card); border-radius: 14px;
+  border: 1px solid var(--rim); padding: 20px;
+  transition: border-color 0.2s;
+}
+
+.ratio-card:hover { border-color: var(--accent); }
+
+.ratio-name {
+  font-family: var(--font-head); font-size: 20px; font-weight: 700;
+  color: var(--accent); margin-bottom: 4px;
+}
+
+.ratio-formula {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--gold); margin-bottom: 12px;
+  padding: 6px 10px; background: rgba(245,200,66,0.04);
+  border-radius: 6px; border-left: 2px solid var(--gold);
+}
+
+.ratio-meaning { font-size: 13px; color: var(--text); margin-bottom: 10px; line-height: 1.5; }
+
+.ratio-range {
+  font-size: 12px; padding: 6px 10px;
+  background: rgba(74,222,128,0.05);
+  border-radius: 6px; color: var(--green); margin-bottom: 8px;
+}
+
+.ratio-caution { font-size: 12px; color: var(--muted); font-style: italic; }
+
+/* ─── Loading spinner ────────────────────────── */
+.thinking {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; border-radius: 16px;
+  background: rgba(196,126,255,0.04);
+  border: 1px solid var(--rim);
+  align-self: flex-start;
+}
+
+.dot { width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); animation: bounce 1.2s infinite; }
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }
+
+/* ─── Section titles ────────────────────────── */
+.section-title {
+  font-family: var(--font-head); font-size: 24px; font-weight: 700;
+  color: var(--text); letter-spacing: 1px; margin-bottom: 20px;
+  display: flex; align-items: center; gap: 12px;
+}
+
+.section-title span { font-size: 14px; color: var(--muted); font-weight: 400;
+  letter-spacing: 0; font-family: var(--font-main); }
+
+/* ─── Error state ────────────────────────────── */
+.error-msg { color: var(--red); font-size: 13px; padding: 10px; }
+
+/* ─── Responsive ─────────────────────────────── */
+@media (max-width: 768px) {
+  .main { padding: 16px; }
+  .calc-grid, .tax-grid { grid-template-columns: 1fr; }
+  .chat-layout { grid-template-columns: 1fr; height: auto; }
+  .quick-prompts { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">🏦</div>
+    <div>
+      <div class="logo-text">VANI FINANCE</div>
+      <div class="logo-sub">AI Chartered Accountant</div>
+    </div>
+  </div>
+  <div class="status-badge">
+    <div class="status-dot"></div>
+    AI CA Active
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="tabs">
+  <div class="tab active" onclick="switchTab('chat')">🤖 AI CA Chat</div>
+  <div class="tab" onclick="switchTab('calc')">🧮 Calculators</div>
+  <div class="tab" onclick="switchTab('tax')">📊 Tax Guide</div>
+  <div class="tab" onclick="switchTab('invest')">💰 Investments</div>
+  <div class="tab" onclick="switchTab('calendar')">📅 Compliance</div>
+  <div class="tab" onclick="switchTab('ratios')">📈 Ratios</div>
+</nav>
+
+<!-- Main -->
+<main class="main">
+
+  <!-- ── CHAT PANEL ───────────────────────────────────────────── -->
+  <div class="panel active" id="panel-chat">
+    <div class="chat-layout">
+      <div class="chat-col">
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg ai">
+            <div class="msg-label">VANI CA</div>
+            <div class="msg-bubble">
+              🏦 Namaste! Main Vani hoon, tumhari AI Chartered Accountant.<br><br>
+              Income tax se lekar stock market analysis tak — sab pooch sakte ho. Main FY 2024-25 ke latest rules ke saath help karoongi.<br><br>
+              <strong>Kya poochna hai?</strong> Tax saving? EMI? GST? Investments? 💡
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <textarea class="chat-input" id="chat-input" placeholder="Tax kaise bachao? / How to save income tax? / EMI calculate karo..." onkeydown="handleKey(event)" rows="1"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()">ASK →</button>
+        </div>
+      </div>
+
+      <div class="quick-prompts">
+        <div class="quick-prompt-title">💡 Quick Questions</div>
+        <button class="qp-btn" onclick="quickAsk('Income tax slab 2024-25 kya hai old aur new regime dono ke liye?')">📊 Tax Slabs FY24-25</button>
+        <button class="qp-btn" onclick="quickAsk('ITR filing deadline kab hai aur kya penalty hoti hai late filing par?')">📅 ITR Deadline</button>
+        <button class="qp-btn" onclick="quickAsk('80C mein kya kya deductions milti hain? Complete list do.')">💰 80C Deductions</button>
+        <button class="qp-btn" onclick="quickAsk('SIP vs lumpsum investment: kya better hai long term ke liye?')">📈 SIP vs Lumpsum</button>
+        <button class="qp-btn" onclick="quickAsk('ELSS vs PPF vs NPS comparison karo tax saving ke liye.')">⚖️ ELSS vs PPF vs NPS</button>
+        <button class="qp-btn" onclick="quickAsk('GST kya hota hai? Rates aur filing process explain karo.')">🧾 GST Basics</button>
+        <button class="qp-btn" onclick="quickAsk('Capital gains tax kya hai? LTCG aur STCG difference explain karo.')">📉 Capital Gains Tax</button>
+        <button class="qp-btn" onclick="quickAsk('Mutual fund mein invest kaise karein? Beginner guide do.')">🎯 MF Beginner Guide</button>
+        <button class="qp-btn" onclick="quickAsk('Home loan par kitna tax benefit milta hai? Section 24, 80C explain karo.')">🏠 Home Loan Tax</button>
+        <button class="qp-btn" onclick="quickAsk('Emergency fund kitna hona chahiye? Kahan rakhein?')">🛡️ Emergency Fund</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CALCULATORS PANEL ────────────────────────────────────── -->
+  <div class="panel" id="panel-calc">
+    <div class="section-title">🧮 Financial Calculators <span>Instant results, no app needed</span></div>
+    <div class="calc-grid">
+
+      <!-- EMI Calculator -->
+      <div class="calc-card">
+        <div class="calc-title">🏦 EMI Calculator</div>
+        <div class="field-group">
+          <div class="field-label">Loan Amount (₹)</div>
+          <input type="number" class="field-input" id="emi-principal" placeholder="e.g. 2000000" value="2000000">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Annual Interest Rate (%)</div>
+          <input type="number" class="field-input" id="emi-rate" placeholder="e.g. 8.5" value="8.5" step="0.1">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Tenure (Years)</div>
+          <input type="number" class="field-input" id="emi-years" placeholder="e.g. 20" value="20">
+        </div>
+        <button class="calc-btn" onclick="calcEMI()">CALCULATE EMI →</button>
+        <div class="result-box" id="emi-result"></div>
+      </div>
+
+      <!-- SIP Calculator -->
+      <div class="calc-card">
+        <div class="calc-title">📈 SIP Calculator</div>
+        <div class="field-group">
+          <div class="field-label">Monthly SIP Amount (₹)</div>
+          <input type="number" class="field-input" id="sip-amount" placeholder="e.g. 5000" value="5000">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Expected Annual Return (%)</div>
+          <input type="number" class="field-input" id="sip-rate" placeholder="e.g. 12" value="12" step="0.5">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Investment Period (Years)</div>
+          <input type="number" class="field-input" id="sip-years" placeholder="e.g. 15" value="15">
+        </div>
+        <button class="calc-btn" onclick="calcSIP()">CALCULATE RETURNS →</button>
+        <div class="result-box" id="sip-result"></div>
+      </div>
+
+      <!-- Tax Calculator -->
+      <div class="calc-card">
+        <div class="calc-title">💸 Tax Estimator</div>
+        <div class="field-group">
+          <div class="field-label">Gross Annual Salary (₹)</div>
+          <input type="number" class="field-input" id="tax-income" placeholder="e.g. 1200000" value="1200000">
+        </div>
+        <div class="field-group">
+          <div class="field-label">80C Investments (₹) — Old Regime Only</div>
+          <input type="number" class="field-input" id="tax-80c" placeholder="e.g. 150000" value="150000">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Regime</div>
+          <select class="field-input" id="tax-regime">
+            <option value="new">New Regime (Default)</option>
+            <option value="old">Old Regime</option>
+          </select>
+        </div>
+        <button class="calc-btn" onclick="calcTax()">ESTIMATE TAX →</button>
+        <div class="result-box" id="tax-result"></div>
+      </div>
+
+      <!-- Lumpsum Calculator -->
+      <div class="calc-card">
+        <div class="calc-title">💰 Lumpsum Calculator</div>
+        <div class="field-group">
+          <div class="field-label">Investment Amount (₹)</div>
+          <input type="number" class="field-input" id="ls-amount" placeholder="e.g. 100000" value="100000">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Annual Return (%)</div>
+          <input type="number" class="field-input" id="ls-rate" placeholder="e.g. 14" value="14" step="0.5">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Investment Period (Years)</div>
+          <input type="number" class="field-input" id="ls-years" placeholder="e.g. 10" value="10">
+        </div>
+        <button class="calc-btn" onclick="calcLumpsum()">CALCULATE RETURNS →</button>
+        <div class="result-box" id="ls-result"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── TAX PANEL ─────────────────────────────────────────────── -->
+  <div class="panel" id="panel-tax">
+    <div class="section-title">📊 Income Tax Guide <span>FY 2024-25 (AY 2025-26)</span></div>
+
+    <div class="regime-toggle">
+      <button class="regime-btn active" id="btn-new" onclick="showRegime('new')">New Regime</button>
+      <button class="regime-btn" id="btn-old" onclick="showRegime('old')">Old Regime</button>
+    </div>
+
+    <div class="tax-grid">
+      <div>
+        <div class="calc-card" style="margin-bottom:16px">
+          <div class="calc-title" id="regime-title">🆕 New Tax Regime (Default)</div>
+          <table class="slab-table">
+            <thead><tr><th>Income Range</th><th>Tax Rate</th></tr></thead>
+            <tbody id="slab-tbody"></tbody>
+          </table>
+          <div style="margin-top:14px; padding:10px 14px; background:rgba(74,222,128,0.05);
+            border-radius:8px; border:1px solid rgba(74,222,128,0.15); font-size:12px; color:var(--green)">
+            <div id="rebate-text"></div>
+            <div id="std-ded-text" style="margin-top:4px; color:var(--muted)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="calc-card">
+          <div class="calc-title">🎁 Key Deductions</div>
+          <div id="deductions-list" style="display:flex;flex-direction:column;gap:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── INVESTMENTS PANEL ─────────────────────────────────────── -->
+  <div class="panel" id="panel-invest">
+    <div class="section-title">💰 Investment Options <span>India-specific comparison</span></div>
+    <div class="invest-grid" id="invest-grid"></div>
+  </div>
+
+  <!-- ── COMPLIANCE PANEL ──────────────────────────────────────── -->
+  <div class="panel" id="panel-calendar">
+    <div class="section-title">📅 Compliance Calendar <span>Never miss a deadline</span></div>
+    <div class="calendar-grid" id="calendar-grid"></div>
+  </div>
+
+  <!-- ── RATIOS PANEL ──────────────────────────────────────────── -->
+  <div class="panel" id="panel-ratios">
+    <div class="section-title">📈 Financial Ratios <span>Stock analysis toolkit</span></div>
+    <div class="ratio-grid" id="ratio-grid"></div>
+  </div>
+
+</main>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// STATE & CONFIG
+// ═══════════════════════════════════════════════════════════════════
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+
+const SYSTEM_PROMPT = `Tu Vani ka AI Finance CA (Chartered Accountant) expert hai.
+Tu India-specific finance, tax, accounting, and investment knowledge rakhta hai.
+
+EXPERTISE: Income Tax (old/new regime FY 2024-25), GST, TDS, ITR, investments (stocks/MF/SIP/PPF/NPS/ELSS), financial planning, accounting (balance sheet, P&L), audit, financial ratios (P/E, ROE, EBITDA), compliance deadlines, business finance, personal finance.
+
+STYLE:
+- Short, clear, voice-friendly answers (2-5 lines for simple queries, more only if needed)
+- Use ₹ for amounts, give examples with numbers
+- Hinglish is fine — mix Hindi/English naturally
+- Practical advice first, theory second
+- Add emoji for visual clarity
+- For calculations, show step-by-step
+- ALWAYS add: "⚠️ Professional CA se consult zaroor karo for major financial decisions."
+- FY 2024-25 figures use karo by default`;
+
+let chatHistory = [];
+
+// ═══════════════════════════════════════════════════════════════════
+// TAB SWITCHING
+// ═══════════════════════════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AI CHAT
+// ═══════════════════════════════════════════════════════════════════
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  appendMsg('user', text);
+  input.value = '';
+  input.style.height = '52px';
+  chatHistory.push({ role: 'user', content: text });
+
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+
+  const thinkEl = appendThinking();
+
+  try {
+    const reply = await callClaudeAPI(chatHistory);
+    thinkEl.remove();
+    appendMsg('ai', reply);
+    chatHistory.push({ role: 'assistant', content: reply });
+  } catch(e) {
+    thinkEl.remove();
+    appendMsg('ai', '❌ API connection error. Check ANTHROPIC_API_KEY in .env file.\n\nLocal tip: "income tax slab FY24-25" ya "80C deductions" poocho — kuch answers offline bhi hain.');
+  }
+
+  btn.disabled = false;
+}
+
+async function callClaudeAPI(messages) {
+  const resp = await fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      system: SYSTEM_PROMPT,
+      messages: messages.slice(-10) // Keep last 10 turns for context
+    })
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${resp.status}`);
+  }
+
+  const data = await resp.json();
+  return data.content[0].text;
+}
+
+function quickAsk(question) {
+  document.getElementById('chat-input').value = question;
+  sendMessage();
+  // Switch to chat tab if not already there
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-chat').classList.add('active');
+  document.querySelector('.tab').classList.add('active');
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function appendMsg(role, text) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `
+    <div class="msg-label">${role === 'user' ? 'YOU' : 'VANI CA'}</div>
+    <div class="msg-bubble">${text.replace(/\n/g, '<br>')}</div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function appendThinking() {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'thinking';
+  div.innerHTML = `<div class="dot"></div><div class="dot"></div><div class="dot"></div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CALCULATORS
+// ═══════════════════════════════════════════════════════════════════
+function fmtINR(n) {
+  if (n >= 1e7) return `₹${(n/1e7).toFixed(2)} Cr`;
+  if (n >= 1e5) return `₹${(n/1e5).toFixed(2)} L`;
+  if (n >= 1e3) return `₹${(n/1e3).toFixed(1)}K`;
+  return `₹${n.toLocaleString('en-IN', {maximumFractionDigits:0})}`;
+}
+
+function showResult(id, rows) {
+  const box = document.getElementById(id);
+  box.innerHTML = rows.map(r =>
+    `<div class="result-row ${r.highlight?'highlight':''}">
+      <span class="label">${r.label}</span>
+      <span class="value">${r.value}</span>
+    </div>`
+  ).join('');
+  box.classList.add('show');
+}
+
+function calcEMI() {
+  const P = +document.getElementById('emi-principal').value;
+  const r = +document.getElementById('emi-rate').value / (12*100);
+  const n = +document.getElementById('emi-years').value * 12;
+  if (!P||!r||!n) return;
+  const emi = P * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1);
+  const total = emi * n;
+  const interest = total - P;
+  showResult('emi-result', [
+    {label:'Monthly EMI', value: fmtINR(emi), highlight:true},
+    {label:'Total Amount Paid', value: fmtINR(total)},
+    {label:'Principal', value: fmtINR(P)},
+    {label:'Total Interest', value: fmtINR(interest)},
+    {label:'Interest to Principal Ratio', value: `${((interest/P)*100).toFixed(1)}%`},
+  ]);
+}
+
+function calcSIP() {
+  const m = +document.getElementById('sip-amount').value;
+  const r = +document.getElementById('sip-rate').value / (12*100);
+  const n = +document.getElementById('sip-years').value * 12;
+  if (!m||!r||!n) return;
+  const fv = m * (Math.pow(1+r,n)-1)/r * (1+r);
+  const invested = m * n;
+  const gains = fv - invested;
+  showResult('sip-result', [
+    {label:'Future Value', value: fmtINR(fv), highlight:true},
+    {label:'Total Invested', value: fmtINR(invested)},
+    {label:'Total Gains', value: fmtINR(gains)},
+    {label:'Absolute Returns', value: `${((gains/invested)*100).toFixed(1)}%`},
+    {label:'Wealth Multiplier', value: `${(fv/invested).toFixed(1)}x`},
+  ]);
+}
+
+function calcLumpsum() {
+  const P = +document.getElementById('ls-amount').value;
+  const r = +document.getElementById('ls-rate').value / 100;
+  const n = +document.getElementById('ls-years').value;
+  if (!P||!r||!n) return;
+  const fv = P * Math.pow(1+r, n);
+  const gains = fv - P;
+  showResult('ls-result', [
+    {label:'Future Value', value: fmtINR(fv), highlight:true},
+    {label:'Amount Invested', value: fmtINR(P)},
+    {label:'Total Gains', value: fmtINR(gains)},
+    {label:'Absolute Returns', value: `${((gains/P)*100).toFixed(1)}%`},
+    {label:'CAGR', value: `${(r*100).toFixed(1)}%`},
+  ]);
+}
+
+function calcTax() {
+  const income = +document.getElementById('tax-income').value;
+  const c80 = +document.getElementById('tax-80c').value || 0;
+  const regime = document.getElementById('tax-regime').value;
+  if (!income) return;
+
+  let taxable, tax;
+  const stdDed = regime === 'new' ? 75000 : 50000;
+
+  if (regime === 'new') {
+    taxable = Math.max(0, income - stdDed);
+    tax = 0;
+    if (taxable > 1500000) tax += (taxable-1500000)*0.30;
+    if (taxable > 1200000) tax += Math.min(taxable-1200000, 300000)*0.20;
+    if (taxable > 1000000) tax += Math.min(taxable-1000000, 200000)*0.15;
+    if (taxable >  700000) tax += Math.min(taxable-700000,  300000)*0.10;
+    if (taxable >  300000) tax += Math.min(taxable-300000,  400000)*0.05;
+    if (taxable <= 700000) tax = 0; // 87A rebate
+  } else {
+    const ded = Math.min(c80, 150000) + stdDed;
+    taxable = Math.max(0, income - ded);
+    tax = 0;
+    if (taxable > 1000000) tax += (taxable-1000000)*0.30;
+    if (taxable >  500000) tax += Math.min(taxable-500000, 500000)*0.20;
+    if (taxable >  250000) tax += Math.min(taxable-250000, 250000)*0.05;
+    if (taxable <= 500000) tax = 0; // 87A rebate
+  }
+
+  const cess = tax * 0.04;
+  const totalTax = tax + cess;
+  const effRate = income > 0 ? (totalTax/income*100) : 0;
+  const inHand = income - totalTax;
+
+  showResult('tax-result', [
+    {label:'Taxable Income', value: fmtINR(taxable)},
+    {label:'Base Tax', value: fmtINR(tax)},
+    {label:'Health & Education Cess (4%)', value: fmtINR(cess)},
+    {label:'Total Tax Payable', value: fmtINR(totalTax), highlight:true},
+    {label:'Effective Tax Rate', value: `${effRate.toFixed(2)}%`},
+    {label:'Net In-Hand (Annual)', value: fmtINR(inHand)},
+    {label:'Monthly In-Hand', value: fmtINR(inHand/12)},
+  ]);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TAX SLABS DATA
+// ═══════════════════════════════════════════════════════════════════
+const TAX_DATA = {
+  new: {
+    title: '🆕 New Tax Regime (Default FY 2024-25)',
+    slabs: [
+      {range:'₹0 – ₹3,00,000', rate:'NIL', cls:'rate-nil'},
+      {range:'₹3,00,001 – ₹7,00,000', rate:'5%', cls:'rate-low'},
+      {range:'₹7,00,001 – ₹10,00,000', rate:'10%', cls:'rate-low'},
+      {range:'₹10,00,001 – ₹12,00,000', rate:'15%', cls:'rate-mid'},
+      {range:'₹12,00,001 – ₹15,00,000', rate:'20%', cls:'rate-mid'},
+      {range:'Above ₹15,00,000', rate:'30%', cls:'rate-high'},
+    ],
+    rebate: '💡 Section 87A: Income up to ₹7 lakhs → Zero tax after rebate',
+    std: '📌 Standard Deduction: ₹75,000 for salaried',
+    deductions: [
+      '❌ No 80C deductions available',
+      '❌ No HRA exemption',
+      '❌ No LTA exemption',
+      '✅ Standard Deduction ₹75,000',
+      '✅ Family pension deduction',
+      '⚠️ Good if deductions &lt; ₹3.75 lakhs',
+    ]
+  },
+  old: {
+    title: '📋 Old Tax Regime',
+    slabs: [
+      {range:'₹0 – ₹2,50,000', rate:'NIL', cls:'rate-nil'},
+      {range:'₹2,50,001 – ₹5,00,000', rate:'5%', cls:'rate-low'},
+      {range:'₹5,00,001 – ₹10,00,000', rate:'20%', cls:'rate-mid'},
+      {range:'Above ₹10,00,000', rate:'30%', cls:'rate-high'},
+    ],
+    rebate: '💡 Section 87A: Income up to ₹5 lakhs → Zero tax',
+    std: '📌 Standard Deduction: ₹50,000 for salaried',
+    deductions: [
+      '✅ 80C: Up to ₹1.5 Lakh (PPF, ELSS, LIC, EPF...)',
+      '✅ 80D: ₹25,000 (medical insurance)',
+      '✅ HRA: Actual or formula-based',
+      '✅ LTA: Leave Travel Allowance',
+      '✅ 80CCD(1B): NPS extra ₹50,000',
+      '✅ 80TTA: ₹10,000 savings interest',
+      '✅ Home Loan interest 24(b): ₹2 lakhs',
+    ]
+  }
+};
+
+function showRegime(name) {
+  document.getElementById('btn-new').classList.toggle('active', name==='new');
+  document.getElementById('btn-old').classList.toggle('active', name==='old');
+  const d = TAX_DATA[name];
+  document.getElementById('regime-title').textContent = d.title;
+  document.getElementById('slab-tbody').innerHTML = d.slabs.map(s =>
+    `<tr><td>${s.range}</td><td class="${s.cls}">${s.rate}</td></tr>`
+  ).join('');
+  document.getElementById('rebate-text').textContent = d.rebate;
+  document.getElementById('std-ded-text').textContent = d.std;
+  document.getElementById('deductions-list').innerHTML = d.deductions.map(x =>
+    `<div style="font-size:13px;padding:6px 10px;background:rgba(196,126,255,0.03);
+      border-radius:6px;border-left:2px solid rgba(196,126,255,0.2)">${x}</div>`
+  ).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// INVESTMENTS DATA
+// ═══════════════════════════════════════════════════════════════════
+const INVESTMENTS = [
+  {name:'ELSS', full:'Equity Linked Savings Scheme', accent:'',
+   returns:'12–15%', lockin:'3 years', tax:'80C ₹1.5L', risk:'High', riskCls:'risk-high',
+   for:'Tax saving + wealth creation'},
+  {name:'PPF', full:'Public Provident Fund', accent:'gold',
+   returns:'7.1% p.a.', lockin:'15 years', tax:'EEE — Exempt Exempt Exempt', risk:'Zero', riskCls:'risk-zero',
+   for:'Safe retirement corpus'},
+  {name:'NPS', full:'National Pension System', accent:'green',
+   returns:'9–12%', lockin:'Till 60 yrs', tax:'80C + extra ₹50K (80CCD1B)', risk:'Medium', riskCls:'risk-med',
+   for:'Retirement + extra tax benefit'},
+  {name:'FD', full:'Fixed Deposit', accent:'blue',
+   returns:'6.5–7.5%', lockin:'Flexible', tax:'80C only for 5-yr tax saver', risk:'Very Low', riskCls:'risk-zero',
+   for:'Capital preservation, short-term'},
+  {name:'SIP MF', full:'Systematic Investment Plan', accent:'',
+   returns:'12–18% (historical ~14%)', lockin:'None (ELSS: 3yr)', tax:'LTCG 12.5% above ₹1.25L', risk:'Medium–High', riskCls:'risk-high',
+   for:'Wealth creation, goal-based'},
+  {name:'SGBs', full:'Sovereign Gold Bonds', accent:'gold',
+   returns:'Gold appreciation + 2.5% p.a.', lockin:'8 years', tax:'Capital gain exempt at maturity', risk:'Low–Med', riskCls:'risk-low',
+   for:'Gold exposure without physical gold'},
+  {name:'Direct Stocks', full:'NSE/BSE Listed Equities', accent:'',
+   returns:'Market dependent', lockin:'None', tax:'LTCG 12.5% / STCG 20%', risk:'High', riskCls:'risk-high',
+   for:'Informed investors, long-term compounding'},
+  {name:'REITs', full:'Real Estate Investment Trusts', accent:'blue',
+   returns:'8–12% (dividends + appreciation)', lockin:'None', tax:'Dividend + LTCG applicable', risk:'Medium', riskCls:'risk-med',
+   for:'Real estate exposure without large capital'},
+];
+
+function renderInvestments() {
+  document.getElementById('invest-grid').innerHTML = INVESTMENTS.map(inv => `
+    <div class="invest-card ${inv.accent}">
+      <div class="invest-name">${inv.name}</div>
+      <div class="invest-full">${inv.full}</div>
+      <div class="invest-meta">
+        <div class="invest-row"><span class="k">Returns</span><span class="v" style="color:var(--green)">${inv.returns}</span></div>
+        <div class="invest-row"><span class="k">Lock-in</span><span class="v">${inv.lockin}</span></div>
+        <div class="invest-row"><span class="k">Tax Benefit</span><span class="v" style="color:var(--gold);font-size:11px">${inv.tax}</span></div>
+        <div class="invest-row"><span class="k">Risk</span><span class="v"><span class="risk-badge ${inv.riskCls}">${inv.risk}</span></span></div>
+        <div class="invest-row" style="margin-top:4px"><span class="k">Best For</span></div>
+        <div style="font-size:12px;color:var(--text);margin-top:2px;font-style:italic">${inv.for}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// COMPLIANCE CALENDAR DATA
+// ═══════════════════════════════════════════════════════════════════
+const CALENDAR = [
+  { title:'📄 ITR Filing', icon:'📄', items:[
+    {date:'31 July', desc:'ITR deadline — Non-audit salaried, individuals'},
+    {date:'31 October', desc:'ITR deadline — Audit cases'},
+    {date:'31 December', desc:'Belated or Revised ITR (with penalty)'},
+  ]},
+  { title:'🧾 GST Returns', icon:'🧾', items:[
+    {date:'11th (monthly)', desc:'GSTR-1 — Outward supplies return'},
+    {date:'20th (monthly)', desc:'GSTR-3B — Summary return + payment'},
+    {date:'13th (quarterly)', desc:'GSTR-1 for quarterly QRMP filers'},
+    {date:'22nd/24th (qtrly)', desc:'GSTR-3B for quarterly filers'},
+  ]},
+  { title:'💸 Advance Tax', icon:'💸', items:[
+    {date:'15 June', desc:'First installment — 15% of estimated tax'},
+    {date:'15 September', desc:'Second installment — 45% cumulative'},
+    {date:'15 December', desc:'Third installment — 75% cumulative'},
+    {date:'15 March', desc:'Final installment — 100% of total tax'},
+  ]},
+  { title:'🏦 TDS / TCS', icon:'🏦', items:[
+    {date:'7th of next month', desc:'TDS payment to government (challan)'},
+    {date:'31 Jul / 31 Oct', desc:'Q1 & Q2 TDS return (Form 24Q/26Q)'},
+    {date:'31 Jan / 31 May', desc:'Q3 & Q4 TDS return'},
+    {date:'15 days from deduction', desc:'Form 16A to deductee'},
+  ]},
+  { title:'📋 Annual Filings', icon:'📋', items:[
+    {date:'30 September', desc:'Tax Audit Report (Form 3CA/3CB)'},
+    {date:'30 November', desc:'Transfer Pricing (Form 3CEB)'},
+    {date:'31 December', desc:'GSTR-9 Annual Return'},
+  ]},
+  { title:'⚠️ Penalties', icon:'⚠️', items:[
+    {date:'₹1,000 – ₹5,000', desc:'Late ITR filing penalty (u/s 234F)'},
+    {date:'18% p.a.', desc:'GST interest on delayed payment'},
+    {date:'1% p.m.', desc:'TDS non-deduction interest (u/s 201)'},
+    {date:'₹200/day', desc:'TDS return late filing fee'},
+  ]},
+];
+
+function renderCalendar() {
+  document.getElementById('calendar-grid').innerHTML = CALENDAR.map(cat => `
+    <div class="deadline-card">
+      <div class="deadline-header">${cat.title}</div>
+      ${cat.items.map(item => `
+        <div class="deadline-item">
+          <div class="deadline-date">${item.date}</div>
+          <div class="deadline-desc">${item.desc}</div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FINANCIAL RATIOS DATA
+// ═══════════════════════════════════════════════════════════════════
+const RATIOS = [
+  {name:'P/E Ratio', formula:'Market Price / Earnings Per Share',
+   meaning:'Kitna premium pay kar rahe ho per rupee earnings ke liye. High P/E = high growth expectations.',
+   range:'< 25: Value stock | < 30: Generally acceptable | > 40: Expensive',
+   caution:'High debt ya one-time gains se P/E mislead kar sakta hai'},
+  {name:'EPS', formula:'Net Profit / Total Shares Outstanding',
+   meaning:'Per share kitna net profit company ne generate kiya. Growing EPS = healthy company.',
+   range:'Industry-specific; consistent YoY growth important',
+   caution:'Stock splits se historical EPS comparison galat ho sakti hai'},
+  {name:'ROE', formula:'Net Profit / Shareholders Equity × 100',
+   meaning:'Company apne shareholders ke paisa pe kitna return deti hai. Higher = better efficiency.',
+   range:'> 15%: Good | > 20%: Excellent | < 10%: Weak',
+   caution:'High debt se ROE artificially inflate hota hai — check D/E bhi'},
+  {name:'ROCE', formula:'EBIT / Capital Employed × 100',
+   meaning:'Total capital (debt + equity) pe kitna return. ROE se better for capital-intensive sectors.',
+   range:'> Cost of capital (typically > 12-15%) is acceptable',
+   caution:'Asset-light businesses ka ROCE naturally higher hoga'},
+  {name:'Debt/Equity', formula:'Total Debt / Total Shareholders Equity',
+   meaning:'Company kitne debt pe operate kar rahi hai. Lower is generally safer.',
+   range:'< 0.5: Conservative | < 1: Moderate | > 2: Risky for non-NBFC',
+   caution:'NBFC, Banks, Infra companies mein high D/E normal hota hai'},
+  {name:'Current Ratio', formula:'Current Assets / Current Liabilities',
+   meaning:'Short-term debt pay karne ki ability measure karta hai.',
+   range:'1.5 to 3: Healthy | < 1: Liquidity risk | > 3: Excess idle cash',
+   caution:'Industry norms vary; retail companies typically have lower ratios'},
+  {name:'EBITDA Margin', formula:'EBITDA / Revenue × 100',
+   meaning:'Operating profitability before depreciation, interest, tax. Apples-to-apples comparison deta hai.',
+   range:'> 20%: Good | > 30%: Excellent (IT, pharma) | Varies by sector',
+   caution:'Compare within same industry only; capital-intensive sectors have lower margins'},
+  {name:'PEG Ratio', formula:'P/E Ratio / EPS Growth Rate',
+   meaning:'P/E ko growth se adjust karta hai. < 1 means undervalued relative to growth.',
+   range:'< 1: Potentially undervalued | 1: Fair value | > 2: Expensive',
+   caution:'Future growth estimates unreliable; use with caution'},
+  {name:'Price to Book', formula:'Market Price / Book Value per Share',
+   meaning:'Market price vs accounting book value. Low P/B may indicate undervaluation.',
+   range:'< 1: Trading below book | 1-3: Fair | > 5: Premium valuation',
+   caution:'Asset-light companies (IT, services) naturally have high P/B'},
+  {name:'Dividend Yield', formula:'Annual Dividend / Current Stock Price × 100',
+   meaning:'Investment pe kitna regular income stock de raha hai.',
+   range:'> 2%: Decent yield | > 4%: High yield stock',
+   caution:'Very high yield sometimes signals distress — check payout ratio bhi'},
+  {name:'Interest Coverage', formula:'EBIT / Interest Expense',
+   meaning:'Company kitni easily apna interest pay kar sakti hai earnings se.',
+   range:'> 3: Safe | > 5: Comfortable | < 1.5: Danger zone',
+   caution:'Cyclical businesses mein temporary dips acceptable hain'},
+  {name:'Free Cash Flow', formula:'Operating Cash Flow − Capital Expenditure',
+   meaning:'Business operations ke baad kitna actual cash bcha. More reliable than net profit.',
+   range:'Positive and growing FCF = healthy business',
+   caution:'High capex phase mein temporarily negative FCF normal hai'},
+];
+
+function renderRatios() {
+  document.getElementById('ratio-grid').innerHTML = RATIOS.map(r => `
+    <div class="ratio-card">
+      <div class="ratio-name">${r.name}</div>
+      <div class="ratio-formula">${r.formula}</div>
+      <div class="ratio-meaning">${r.meaning}</div>
+      <div class="ratio-range">✅ ${r.range}</div>
+      <div class="ratio-caution">⚠️ ${r.caution}</div>
+    </div>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════
+showRegime('new');
+renderInvestments();
+renderCalendar();
+renderRatios();
+</script>
+</body>
+</html>

@@ -765,6 +765,89 @@ def _start_tauri_api_server():
         async def tauri_get_state():
             return state
 
+        # ── P4: SSE streaming endpoint ────────────────────────────────────
+        from fastapi.responses import StreamingResponse as _StreamingResponse
+
+        @tauri_api.get("/stream")
+        async def tauri_stream(text: str = ""):
+            """
+            P4: Token-streaming endpoint. Returns text/event-stream (SSE).
+            Rust reads this with reqwest streaming and emits events to React.
+            React appends tokens to the chat bubble in real time.
+            """
+            text = text.strip()
+            if not text:
+                async def _empty():
+                    import json as _json
+                    yield f'data: {_json.dumps({"token": "", "done": True, "full_text": ""})}\'\n\n'
+                return _StreamingResponse(_empty(), media_type="text/event-stream")
+
+            async def _generate():
+                try:
+                    from vani.vani_legacy.p4_streaming import sse_stream_generator
+                    import os as _os
+                    model = _os.getenv("PREFERRED_MODEL", "qwen2.5:7b")
+                    async for chunk in sse_stream_generator(text, model=model):
+                        yield chunk
+                except Exception as e:
+                    import json as _json
+                    log.warning(f"[tauri_api] /stream error: {e}")
+                    try:
+                        from vani.services.text_chat import handle_text_command
+                        reply = await handle_text_command(text)
+                    except Exception:
+                        reply = f"Error: {e}"
+                    yield f'data: {_json.dumps({"token": reply, "done": False})}\'\n\n'
+                    yield f'data: {_json.dumps({"token": "", "done": True, "full_text": reply})}\'\n\n'
+
+            return _StreamingResponse(
+                _generate(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        # ── P4: Wake word endpoints ───────────────────────────────────────
+
+        @tauri_api.get("/wake/status")
+        async def wake_status():
+            try:
+                from vani.vani_legacy.p4_wake_word import wake_word_controller
+                return wake_word_controller.status()
+            except Exception as e:
+                return {"enabled": False, "error": str(e)}
+
+        @tauri_api.post("/wake/trigger")
+        async def wake_trigger(body: dict):
+            try:
+                from vani.vani_legacy.p4_wake_word import wake_word_controller
+                confidence = float(body.get("confidence", 1.0))
+                result = wake_word_controller.trigger(confidence)
+                if result["acted"]:
+                    state["listening"] = True
+                return result
+            except Exception as e:
+                return {"acted": False, "reason": str(e)}
+
+        @tauri_api.post("/wake/set_enabled")
+        async def wake_set_enabled(body: dict):
+            try:
+                from vani.vani_legacy.p4_wake_word import wake_word_controller
+                enabled = bool(body.get("enabled", True))
+                wake_word_controller.set_enabled(enabled)
+                return {"enabled": enabled}
+            except Exception as e:
+                return {"error": str(e)}
+
+        # ── P4: Persistent state endpoint ────────────────────────────────
+
+        @tauri_api.get("/p4/state")
+        async def p4_get_state():
+            try:
+                from vani.vani_legacy.p4_state import tray_state_manager
+                return tray_state_manager.state.to_dict()
+            except Exception as e:
+                return {"error": str(e)}
+
         def _run():
             config = uvicorn.Config(
                 tauri_api,
@@ -860,7 +943,7 @@ def _open_ui(html_path: Path):
     # ── Phase 9: Use platform adapter when available ───────────────────────────
     if _PLATFORM_ADAPTER_OK:
         try:
-            _platform_adapter.open_app_browser(url)
+            pass  # Tauri handles the window
             log.info(f"[ui] Opened via platform adapter ({_platform_adapter.name})")
             return
         except Exception as _e:
@@ -878,7 +961,7 @@ def _open_ui(html_path: Path):
                     "--disable-extensions", "--no-first-run", "--no-default-browser-check"])
                 log.info("[ui] Opened with Chrome app mode OK")
                 return
-        subprocess.Popen(["open", "-a", "Safari", "http://127.0.0.1:5500/ui"])
+        pass  # Tauri handles the window
     elif IS_WIN:
         for chrome in [
             os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
@@ -888,9 +971,9 @@ def _open_ui(html_path: Path):
             if os.path.exists(chrome):
                 subprocess.Popen([chrome, f"--app={url}", "--window-size=420,680"])
                 return
-        webbrowser.open(url)
+        pass  # Tauri handles the window
     else:
-        webbrowser.open(url)
+        pass  # Tauri handles the window
 
 
 # ── Module-level entrypoint ───────────────────────────────────────────────────

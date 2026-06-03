@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.vani.os",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "",
     "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:5500/ui",
     "frontendDist": "../ui/dist"
   },
   "app": {
@@ -31,6 +31,53 @@
       "menuOnLeftClick": false,
       "title": "Vani"
     },
-    "macOSPrivateApi": true
+    "macOSPrivateApi": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "default",
+          "description": "default",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "core:event:allow-listen",
+            "core:event:allow-emit",
+            "core:event:default",
+            "core:window:default",
+            "core:window:allow-show",
+            "core:window:allow-hide",
+            "core:window:allow-set-focus",
+            "core:window:allow-set-position",
+            "core:window:allow-outer-position",
+            "core:window:allow-is-visible",
+            "core:app:default",
+            "core:webview:default",
+            "shell:allow-open",
+            "notification:default",
+            "fs:default"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg",
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Vani \u2014 Your Personal AI",
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
   }
 }

@@ -123,5 +123,14 @@ async def handle_text_command(message: str) -> str:
 
     # ── FIX: Ollama returned empty (null tool = conversational query) ──────────
     # Route to Gemini for a real text answer instead of going silent.
-    log.info(f"[TEXT_CHAT] Ollama returned empty — routing to Gemini for: {message!r}")
-    return await _gemini_conversational_reply(message)
+    log.info(f"[TEXT_CHAT] using direct Ollama for conversational reply")
+    import requests
+    try:
+        r = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": "qwen2.5:3b", "prompt": message, "stream": False},
+            timeout=10
+        )
+        return r.json().get("response", "Kuch samajh nahi aaya.").strip()
+    except Exception as e:
+        return f"Error: {e}"

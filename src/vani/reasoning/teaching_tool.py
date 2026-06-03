@@ -1005,7 +1005,377 @@ def get_teaching_prompt_block() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5.  QUICK CLI TEST
+# 6.  WORKING MEMORY READER
+#     Reads vani_working_memory.json to give lessons context about the user.
+#     e.g. if user is learning Java → Java examples get priority.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import json as _json
+import pathlib as _pathlib
+
+_MEMORY_PATHS = [
+    _pathlib.Path(__file__).resolve().parents[4] / "vani_working_memory.json",
+    _pathlib.Path(__file__).resolve().parents[3] / "vani_working_memory.json",
+    _pathlib.Path.cwd() / "vani_working_memory.json",
+]
+
+
+def _load_working_memory() -> dict:
+    """Load vani_working_memory.json — returns empty dict on any failure."""
+    for p in _MEMORY_PATHS:
+        try:
+            if p.exists():
+                return _json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _get_active_subjects(memory: dict) -> list[str]:
+    """Extract what the user is currently studying from working memory."""
+    topics = memory.get("active_topics", [])
+    reminders = memory.get("pending_reminders", [])
+    subjects = []
+    for t in topics:
+        subjects.append(t.get("text", "").lower())
+    for r in reminders:
+        subjects.append(r.get("text", "").lower())
+    return [s for s in subjects if s]
+
+
+def _infer_style_from_memory(memory: dict) -> str:
+    """Infer preferred teaching style from memory context."""
+    active = " ".join(_get_active_subjects(memory))
+    if any(w in active for w in ["java", "python", "c++", "code", "coding"]):
+        return "humor"
+    if any(w in active for w in ["exam", "neet", "jee", "upsc"]):
+        return "motivation"
+    return "humor"  # default — relatable and engaging
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7.  BUILD VISUAL LESSON
+#     Main entry point called by router.py's TEACH intent handler.
+#     Returns a dict with:
+#       spoken_response  — Vani speaks this (concise Hinglish)
+#       visual_type      — "flowchart" | "diagram" | "timeline" | "comparison"
+#       mermaid_code     — mermaid.js diagram string (for UI panel)
+#       concept          — extracted concept name
+#       narration        — full teaching narration
+#       memory_context   — list of user's active topics (for UI display)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re as _re
+
+# Keywords that indicate specific visual type preferences in the query
+_FLOWCHART_WORDS = _re.compile(r"\b(flow|process|steps?|kaise|how\s+does|how\s+do|cycle|loop)\b", _re.I)
+_TIMELINE_WORDS  = _re.compile(r"\b(history|timeline|kab|when|chronology|evolution|invention)\b", _re.I)
+_COMPARE_WORDS   = _re.compile(r"\b(difference|vs|compare|versus|better|farak|alag)\b", _re.I)
+_MINDMAP_WORDS   = _re.compile(r"\b(overview|all\s+about|poora|types\s+of|kinds\s+of|parts\s+of)\b", _re.I)
+
+# Extract concept from query by stripping trigger words
+_CONCEPT_STRIP = _re.compile(
+    r"^(?:teach\s+me|explain|samjhao|samjha|padha|padh|sikha|bata|batao|"
+    r"what\s+is|what\s+are|how\s+does|how\s+do|kya\s+hai|kya\s+hota|"
+    r"diagram\s+of|flowchart\s+of|concept\s+of|define|describe|"
+    r"mujhe\s+|about\s+|me\s+|the\s+)",
+    _re.IGNORECASE,
+)
+
+
+def _extract_concept(query: str) -> str:
+    """Strip trigger words and return the bare concept being asked about."""
+    concept = _CONCEPT_STRIP.sub("", query.strip()).strip(" ?!.,")
+    # Remove trailing filler
+    concept = _re.sub(r"\s+(kya|hai|hota|samajhna|seekhna|batao|please|karo)\s*$", "", concept, flags=_re.I)
+    return concept.strip() or query.strip()
+
+
+def _infer_visual_type(query: str) -> str:
+    """Decide best visual type from query keywords."""
+    if _TIMELINE_WORDS.search(query):
+        return "timeline"
+    if _COMPARE_WORDS.search(query):
+        return "comparison"
+    if _MINDMAP_WORDS.search(query):
+        return "mindmap"
+    if _FLOWCHART_WORDS.search(query):
+        return "flowchart"
+    return "diagram"  # default
+
+
+def _build_mermaid_for_concept(concept: str, visual_type: str, lesson: "Lesson") -> str:
+    """
+    Generate a Mermaid diagram string for the concept.
+    Falls back to a simple concept map if nothing specific found.
+    """
+    c = concept.lower()
+
+    # ── Pre-baked diagrams for common concepts ────────────────────────────────
+    DIAGRAMS: dict[str, str] = {
+        "photosynthesis": (
+            "flowchart TD\n"
+            "    Sun[☀️ Sunlight] --> Chlorophyll\n"
+            "    CO2[CO₂ from Air] --> Chlorophyll\n"
+            "    Water[💧 Water from Roots] --> Chlorophyll\n"
+            "    Chlorophyll[🌿 Chlorophyll in Leaf] --> Glucose[🍬 Glucose]\n"
+            "    Chlorophyll --> O2[🫧 Oxygen Released]\n"
+            "    Glucose --> Energy[⚡ Plant Energy]"
+        ),
+        "water cycle": (
+            "flowchart LR\n"
+            "    Ocean[🌊 Ocean / Water Body] -->|Evaporation| Vapor[☁️ Water Vapor]\n"
+            "    Vapor -->|Condensation| Cloud[🌧️ Cloud Formation]\n"
+            "    Cloud -->|Precipitation| Rain[🌧️ Rain / Snow]\n"
+            "    Rain -->|Runoff| River[🏞️ Rivers]\n"
+            "    River --> Ocean"
+        ),
+        "newton's first law": (
+            "flowchart TD\n"
+            "    Object[📦 Object at Rest] -->|No Force| Rest[Stays at Rest]\n"
+            "    Moving[📦 Object in Motion] -->|No Force| Move[Keeps Moving]\n"
+            "    Force[💥 External Force Applied] -->|Changes| State[State Changes]\n"
+            "    Rest -.->|Until| Force\n"
+            "    Move -.->|Until| Force"
+        ),
+        "newton": (
+            "flowchart TD\n"
+            "    N1[1st Law: Inertia\nObject stays as-is without force]\n"
+            "    N2[2nd Law: F = ma\nForce = Mass × Acceleration]\n"
+            "    N3[3rd Law: Action-Reaction\nEvery action has equal opposite]\n"
+            "    Newton[🍎 Newton] --> N1\n"
+            "    Newton --> N2\n"
+            "    Newton --> N3"
+        ),
+        "cell division": (
+            "flowchart TD\n"
+            "    Parent[🧬 Parent Cell] --> Interphase\n"
+            "    Interphase[Interphase: DNA Copies] --> Prophase\n"
+            "    Prophase[Prophase: Chromosomes Visible] --> Metaphase\n"
+            "    Metaphase[Metaphase: Line Up Center] --> Anaphase\n"
+            "    Anaphase[Anaphase: Pull Apart] --> Telophase\n"
+            "    Telophase[Telophase: Two Nuclei] --> Cytokinesis\n"
+            "    Cytokinesis[Cytokinesis: Split] --> D1[Daughter Cell 1]\n"
+            "    Cytokinesis --> D2[Daughter Cell 2]"
+        ),
+        "mitosis": (
+            "flowchart TD\n"
+            "    Parent[🧬 Parent Cell] --> Interphase\n"
+            "    Interphase --> Prophase --> Metaphase --> Anaphase --> Telophase\n"
+            "    Telophase --> D1[Daughter Cell 1] & D2[Daughter Cell 2]"
+        ),
+        "heart": (
+            "flowchart LR\n"
+            "    Body[🫀 Body] -->|Deoxygenated| RA[Right Atrium]\n"
+            "    RA -->|Tricuspid Valve| RV[Right Ventricle]\n"
+            "    RV -->|Pulmonary Artery| Lungs[🫁 Lungs]\n"
+            "    Lungs -->|Oxygenated| LA[Left Atrium]\n"
+            "    LA -->|Mitral Valve| LV[Left Ventricle]\n"
+            "    LV -->|Aorta| Body"
+        ),
+        "dna": (
+            "flowchart TD\n"
+            "    DNA[🧬 DNA Double Helix] --> Gene[Gene: Segment of DNA]\n"
+            "    Gene --> mRNA[mRNA via Transcription]\n"
+            "    mRNA --> Ribosome[Ribosome]\n"
+            "    Ribosome -->|Translation| Protein[🔬 Protein]\n"
+            "    Protein --> Trait[Physical Trait]"
+        ),
+        "democracy": (
+            "flowchart TD\n"
+            "    People[👥 People / Citizens] -->|Vote| Election\n"
+            "    Election[🗳️ Free & Fair Election] --> Govt[Elected Government]\n"
+            "    Govt --> Executive[Executive: PM / President]\n"
+            "    Govt --> Legislature[Legislature: Parliament]\n"
+            "    Govt --> Judiciary[Judiciary: Courts]\n"
+            "    Judiciary -->|Checks| Executive\n"
+            "    Legislature -->|Checks| Executive"
+        ),
+        "indian constitution": (
+            "mindmap\n"
+            "  root((Indian\n  Constitution))\n"
+            "    Preamble\n"
+            "      Sovereign\n"
+            "      Socialist\n"
+            "      Secular\n"
+            "      Democratic\n"
+            "      Republic\n"
+            "    Fundamental Rights\n"
+            "      Right to Equality\n"
+            "      Right to Freedom\n"
+            "      Right against Exploitation\n"
+            "    DPSP\n"
+            "      Non-Justiciable\n"
+            "      Welfare State\n"
+            "    Fundamental Duties\n"
+            "      Article 51A\n"
+            "      11 Duties"
+        ),
+        "oop": (
+            "classDiagram\n"
+            "    class Animal {\n"
+            "        +name: String\n"
+            "        +speak()\n"
+            "    }\n"
+            "    class Dog {\n"
+            "        +breed: String\n"
+            "        +fetch()\n"
+            "    }\n"
+            "    class Cat {\n"
+            "        +indoor: Bool\n"
+            "        +purr()\n"
+            "    }\n"
+            "    Animal <|-- Dog\n"
+            "    Animal <|-- Cat"
+        ),
+        "sorting": (
+            "flowchart TD\n"
+            "    Input[📋 Unsorted Array] --> Choose{Algorithm?}\n"
+            "    Choose -->|Small data| Bubble[Bubble Sort O n²]\n"
+            "    Choose -->|General use| Merge[Merge Sort O n log n]\n"
+            "    Choose -->|Best avg| Quick[Quick Sort O n log n]\n"
+            "    Choose -->|Already sorted| Insertion[Insertion Sort O n]\n"
+            "    Bubble & Merge & Quick & Insertion --> Output[✅ Sorted Array]"
+        ),
+        "digestive system": (
+            "flowchart TD\n"
+            "    Food[🍎 Food] --> Mouth[👄 Mouth: Chewing + Saliva]\n"
+            "    Mouth --> Esophagus[Esophagus: Peristalsis]\n"
+            "    Esophagus --> Stomach[Stomach: HCl + Enzymes]\n"
+            "    Stomach --> SmallInt[Small Intestine: Absorption]\n"
+            "    SmallInt --> LargeInt[Large Intestine: Water Absorption]\n"
+            "    LargeInt --> Rectum[Rectum] --> Waste[🚽 Excretion]"
+        ),
+        "french revolution": (
+            "timeline\n"
+            "    title French Revolution\n"
+            "    1789 : Estates-General Convened\n"
+            "         : Storming of Bastille\n"
+            "         : Declaration of Rights\n"
+            "    1791 : Constitutional Monarchy\n"
+            "    1792 : First French Republic\n"
+            "    1793 : Reign of Terror: Robespierre\n"
+            "    1799 : Napoleon's Coup"
+        ),
+        "respiration": (
+            "flowchart TD\n"
+            "    O2[O₂ Inhaled] --> Lungs\n"
+            "    Lungs[🫁 Lungs] -->|Gas exchange| Blood[🩸 Blood]\n"
+            "    Blood --> Cells[Body Cells]\n"
+            "    Cells -->|Glucose + O₂| ATP[⚡ ATP Energy]\n"
+            "    Cells --> CO2[CO₂ Produced]\n"
+            "    CO2 --> Blood2[Blood back to Lungs]\n"
+            "    Blood2 --> Exhaled[CO₂ Exhaled]"
+        ),
+        "gravity": (
+            "flowchart TD\n"
+            "    Mass1[🌍 Mass 1] -->|Gravitational Force| Mass2[🍎 Mass 2]\n"
+            "    Mass2 -->|Equal Force| Mass1\n"
+            "    Formula[F = G × m1 × m2 / r²]\n"
+            "    G[G = 6.67 × 10⁻¹¹ Nm²/kg²]\n"
+            "    Note[More mass = More attraction\nMore distance = Less attraction]"
+        ),
+        "osmosis": (
+            "flowchart LR\n"
+            "    HighConc[High Concentration Solution] -->|Water moves| Membrane\n"
+            "    Membrane[Semi-permeable\nMembrane] --> LowConc[Low Concentration]\n"
+            "    Result[Water always moves from\nHigh → Low concentration]\n"
+            "    Bio[In cells: keeps cells\nhydrated & turgid]"
+        ),
+        "electric circuit": (
+            "flowchart LR\n"
+            "    Battery[🔋 Battery EMF] --> Resistor[Resistor R]\n"
+            "    Resistor --> Bulb[💡 Bulb]\n"
+            "    Bulb --> Switch[Switch]\n"
+            "    Switch --> Battery\n"
+            "    V[V = IR: Ohm's Law]\n"
+            "    Power[P = VI = I²R]"
+        ),
+    }
+
+    # Try exact match first
+    if c in DIAGRAMS:
+        return DIAGRAMS[c]
+
+    # Try substring match
+    for key, code in DIAGRAMS.items():
+        if key in c or c in key:
+            return code
+
+    # Generic fallback — build a simple concept diagram from the lesson
+    if lesson:
+        safe_concept = concept.replace('"', '').replace('[', '').replace(']', '')
+        return (
+            f"flowchart TD\n"
+            f"    Concept[📖 {safe_concept}]\n"
+            f"    Concept --> What[What it is]\n"
+            f"    Concept --> How[How it works]\n"
+            f"    Concept --> Why[Why it matters]\n"
+            f"    Concept --> Example[Real-life example]"
+        )
+    return f"flowchart TD\n    A[{concept}] --> B[Learn More]"
+
+
+def build_visual_lesson(engine: "TeachingEngine", query: str) -> dict:
+    """
+    Main entry point for TEACH intent.
+
+    Reads Vani's working memory to personalize, extracts the concept from the
+    query, picks a visual type, generates a Mermaid diagram, builds the lesson,
+    and returns a dict ready for both speech (Vani) and visual rendering (UI).
+
+    Returns:
+        {
+          "concept":          str,
+          "visual_type":      str,
+          "mermaid_code":     str,
+          "spoken_response":  str,   ← Vani speaks this
+          "narration":        str,   ← full lesson text for UI
+          "memory_context":   list,  ← user's active topics
+          "category":         str,
+        }
+    """
+    # 1. Load working memory for context
+    memory = _load_working_memory()
+    active_subjects = _get_active_subjects(memory)
+    preferred_style = _infer_style_from_memory(memory)
+
+    # 2. Extract concept from the raw query
+    concept = _extract_concept(query)
+
+    # 3. Decide visual type
+    visual_type = _infer_visual_type(query)
+
+    # 4. Get the lesson from TeachingEngine
+    lesson = engine.explain(concept, style=preferred_style)  # type: ignore[arg-type]
+
+    # 5. Build mermaid diagram
+    mermaid_code = _build_mermaid_for_concept(concept, visual_type, lesson)
+
+    # 6. Build short spoken response (Vani says this, opens UI panel)
+    if active_subjects:
+        context_hint = f"Tu {active_subjects[0]} seekh raha hai — "
+    else:
+        context_hint = ""
+    spoken_response = (
+        f"{context_hint}{concept} ke baare mein samjhate hain! "
+        f"Main iska visual diagram bana rahi hoon screen pe. "
+        f"{lesson.example[:80]}..."
+    )
+
+    return {
+        "concept":         concept,
+        "visual_type":     visual_type,
+        "mermaid_code":    mermaid_code,
+        "spoken_response": spoken_response,
+        "narration":       lesson.narration,
+        "memory_context":  active_subjects,
+        "category":        lesson.category,
+        "subject":         lesson.subject,
+    }
+
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

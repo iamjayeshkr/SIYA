@@ -1,18 +1,18 @@
-# Vani OS — Merged Codebase (Main + P0 + P1 + P2 + P3)
+# Vani OS — Merged Codebase (Main + P0 + P1 + P2 + P3 + P4)
 
 ## What's in here
 
 | Folder | What |
 |--------|------|
 | `src/vani/` | Original Vani Python backend |
-| `vani_legacy/` | P0 + P1 + P2 new modules |
-| `src-tauri/` | P3 — Rust/Tauri desktop app backend |
-| `ui/` | P3 — React 18 frontend (Chat / Memory / Tools / Models) |
+| `vani_legacy/` | P0–P4 new modules |
+| `src-tauri/` | P3+P4 — Rust/Tauri desktop app backend |
+| `ui/` | P3+P4 — React 18 frontend |
 | `docs/INTEGRATE_P0.md` | How to wire P0 into app.py |
 | `docs/INTEGRATE_P1.md` | How to wire P1 into planner |
 | `docs/INTEGRATE_P2.md` | How to wire P2 into voice stack |
 | `docs/INTEGRATE_P3.md` | How to build and run the Tauri desktop app |
-| `requirements/requirements-all.txt` | All Python dependencies combined |
+| `docs/INTEGRATE_P4.md` | P4: Streaming, tools, tray, wake word |
 
 ## Setup Order
 
@@ -31,58 +31,45 @@ python -m vani_legacy.migrate_secrets
 cd ui && npm install && cd ..
 
 # 5. Follow integration guides in order:
-# docs/INTEGRATE_P0.md → P1 → P2 → P3
+# docs/INTEGRATE_P0.md → P1 → P2 → P3 → P4
 
 # 6. Development (two terminals):
 #   Terminal 1: python -m vani.app        (Python backend)
 #   Terminal 2: cargo tauri dev           (Tauri window)
 ```
 
-## New modules added (vani_legacy/ folder)
+## Modules by phase
 
 ### P0 — Stability
-- `vani_legacy/logging_config.py` — Structured logging (structlog)
-- `vani_legacy/tool_runner.py` — Timeout enforcement for all tools
-- `vani_legacy/tokenjuice.py` — LLM context compression (30-60% reduction)
-- `vani_legacy/db.py` — Tool audit SQLite table
-- `vani_legacy/secrets.py` — macOS Keychain secret management
-- `vani_legacy/migrate_secrets.py` — One-time .env → Keychain migration
+- `vani_legacy/logging_config.py`
+- `vani_legacy/tool_runner.py` ← **P4 updated**: retry-with-backoff, parallel tools
+- `vani_legacy/tokenjuice.py`
+- `vani_legacy/db.py`
+- `vani_legacy/secrets.py`
+- `vani_legacy/migrate_secrets.py`
 
 ### P1 — Semantic Memory
-- `vani_legacy/embeddings.py` — Local embeddings via nomic-embed-text (Ollama)
-- `vani_legacy/memory_semantic.py` — sqlite-vec vector memory store
-- `vani_legacy/memory_router.py` — Unified memory context assembler
-- `vani_legacy/memory_ingestion.py` — Background turn ingestion
+- `vani_legacy/embeddings.py`
+- `vani_legacy/memory_semantic.py`
+- `vani_legacy/memory_router.py`
+- `vani_legacy/memory_ingestion.py`
 
 ### P2 — Offline & Multi-model
-- `vani_legacy/model_registry.py` — Model catalogue with fallback chains
-- `vani_legacy/model_router.py` — Smart routing (Gemini → Flash → Qwen local)
-- `vani_legacy/stt_whisper.py` — Offline STT via faster-whisper
-- `vani_legacy/voice_stack.py` — Hybrid voice (LiveKit primary, offline fallback)
+- `vani_legacy/model_registry.py`
+- `vani_legacy/model_router.py`
+- `vani_legacy/stt_whisper.py`
+- `vani_legacy/voice_stack.py`
 
-## New files added (P3 — Tauri desktop app)
+### P3 — Native Desktop App
+- `src-tauri/src/main.rs` ← **P4 updated**
+- `src-tauri/Cargo.toml` ← **P4 updated**
+- `src-tauri/tauri.conf.json`
+- `ui/src/App.tsx` ← **P4 updated**: streaming chat
+- `ui/src/store/index.ts`
+- `ui/src/hooks/useTauri.ts`
 
-### Rust backend (`src-tauri/`)
-- `src-tauri/src/main.rs` — Window management, system tray, global hotkey, IPC commands
-- `src-tauri/Cargo.toml` — Rust dependencies (tauri 2, reqwest, serde_json, tokio)
-- `src-tauri/tauri.conf.json` — Window config, tray icon, shortcuts
-- `src-tauri/build.rs` — Tauri build script
-- `src-tauri/icons/tray.png` — Tray icon (replace with real art)
-
-### React UI (`ui/`)
-- `ui/src/App.tsx` — Complete 4-view UI (Chat, Memory, Tools, Models)
-- `ui/src/store/index.ts` — Zustand global state
-- `ui/src/hooks/useTauri.ts` — Typed invoke() wrappers with browser mock fallbacks
-- `ui/src/main.tsx` — React 18 entry point
-- `ui/index.html` — Vite root HTML
-- `ui/vite.config.ts` — Vite config (port 1420, Tauri env prefix)
-- `ui/package.json` — npm deps (React 18, zustand, @tauri-apps/api v2)
-
-### Python bridge (`src/vani/app.py` changes)
-- `_start_tauri_api_server()` — FastAPI server on port 8765 (auto-started in `main()`)
-  - `POST /query` — routes text through Vani's reasoning stack
-  - `GET /memory/stats` — memory counts
-  - `POST /memory/search` — semantic search
-  - `GET /tools/history` — tool audit log
-  - `GET /models/status` — model router health
-  - `GET /state` — mirrors existing state dict
+### P4 — Streaming + Reliability
+- `vani_legacy/p4_streaming.py` — SSE token streaming (Ollama + Gemini)
+- `vani_legacy/p4_state.py` — Persistent tray state
+- `vani_legacy/p4_wake_word.py` — Wake word Python controller
+- `src/vani/app.py` — Added `/stream`, `/wake/*`, `/p4/state` endpoints

@@ -14,6 +14,7 @@ PROMPT_PRESETS = {
     "full": ["core", "call", "live", "tool", "pronunciation", "learned", "hinglish_speech", "teaching"],
     "realtime": ["core", "tool", "realtime"],
     "security": ["core", "security"],   # Lockdown mode — unverified speaker
+    "cofounder": ["core", "cofounder"],  # Co-founder mode — startup strategy + daily standups
 }
 
 MODE_DEPENDENCIES = {
