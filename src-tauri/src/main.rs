@@ -12,7 +12,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 // ── Persistent Tray State ─────────────────────────────────────────────────────
 
@@ -207,7 +207,7 @@ async fn get_model_status(state: State<'_, AppState>) -> Result<String, String> 
 
 #[tauri::command]
 async fn open_url(url: String, app: AppHandle) -> Result<(), String> {
-    app.shell().open(url, None).map_err(|e| e.to_string())
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -533,6 +533,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .manage(app_state)

@@ -54,6 +54,7 @@
             "core:app:default",
             "core:webview:default",
             "shell:allow-open",
+            "opener:default",
             "notification:default",
             "fs:default"
           ]
@@ -75,7 +76,7 @@
       "icons/32x32.png"
     ],
     "category": "Productivity",
-    "shortDescription": "Vani — Your Personal AI",
+    "shortDescription": "Vani \u2014 Your Personal AI",
     "macOS": {
       "minimumSystemVersion": "12.0"
     }

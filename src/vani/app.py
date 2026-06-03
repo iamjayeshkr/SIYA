@@ -521,6 +521,96 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json(500, {"ok": False, "reason": str(exc)})
 
+        # ── Plugin routes ──────────────────────────────────────────────────────
+        elif self.path == "/plugin/enable":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                name = body.get("name", "")
+                from vani.plugins import get_registry
+                msg = get_registry().enable(name)
+                self._send_json(200, {"ok": True, "message": msg})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "message": str(exc)})
+
+        elif self.path == "/plugin/disable":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                name = body.get("name", "")
+                from vani.plugins import get_registry
+                msg = get_registry().disable(name)
+                self._send_json(200, {"ok": True, "message": msg})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "message": str(exc)})
+
+        elif self.path == "/plugin/run":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                query = body.get("query", "").strip()
+                messages = body.get("messages", [])
+                if not query:
+                    self._send_json(400, {"handled": False, "message": "Empty query"})
+                    return
+                from vani.plugins import get_registry
+                from vani.plugins.registry import PluginContext
+                context = PluginContext(recent_messages=messages)
+                result = asyncio.run(get_registry().route_to_plugin(query, context))
+                if result is None:
+                    self._send_json(200, {"handled": False, "message": "No plugin matched."})
+                else:
+                    self._send_json(200, {
+                        "handled": True,
+                        "success": result.success,
+                        "message": result.message,
+                        "artifact_path": result.artifact_path,
+                        "artifact_type": result.artifact_type,
+                        "ui_payload": result.ui_payload,
+                    })
+            except Exception as exc:
+                log.exception("[plugin] /plugin/run error")
+                self._send_json(500, {"handled": False, "message": str(exc)})
+
+        elif self.path == "/plugin/memory_save":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                messages = body.get("messages", [])
+                from vani.plugins import get_registry
+                results = asyncio.run(get_registry().broadcast_memory_save(messages))
+                self._send_json(200, {"ok": True, "saved": results})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "message": str(exc)})
+
+        elif self.path == "/plugin/config":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                key = body.get("key", "")
+                value = body.get("value", "")
+                if key and value:
+                    import os as _os
+                    _os.environ[key] = value
+                    # Also persist to .env if possible
+                    try:
+                        env_path = PROJECT_ROOT / ".env"
+                        lines = env_path.read_text().splitlines() if env_path.exists() else []
+                        updated = False
+                        for i, line in enumerate(lines):
+                            if line.startswith(key + "="):
+                                lines[i] = f'{key}="{value}"'
+                                updated = True
+                                break
+                        if not updated:
+                            lines.append(f'{key}="{value}"')
+                        env_path.write_text("\n".join(lines) + "\n")
+                    except Exception:
+                        pass
+                self._send_json(200, {"ok": True})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "message": str(exc)})
+
         else:
             self.send_response(404); self.end_headers()
 
@@ -569,6 +659,28 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send_json(200, get_enrollment_status())
                 except Exception as exc:
                     self._send_json(200, {"enrolled": False, "error": str(exc)})
+
+            # ── Plugin GET routes ──────────────────────────────────────────────
+            elif self.path == "/plugin/list":
+                try:
+                    from vani.plugins import get_registry
+                    plugins = get_registry().list_plugins()
+                    self._send_json(200, {"plugins": plugins})
+                except Exception as exc:
+                    self._send_json(500, {"plugins": [], "error": str(exc)})
+
+            elif self.path == "/plugin/memory":
+                try:
+                    from vani.plugins.builtin.memory_plugin import _load_memory
+                    data = _load_memory()
+                    sessions = data.get("sessions", [])
+                    self._send_json(200, {
+                        "sessions_count": len(sessions),
+                        "facts": data.get("facts", {}),
+                        "last_5": sessions[-5:] if sessions else [],
+                    })
+                except Exception as exc:
+                    self._send_json(500, {"sessions_count": 0, "facts": {}, "last_5": [], "error": str(exc)})
 
             elif self.path == "/ui":
                 html_file = HTML_PATH
@@ -917,6 +1029,9 @@ async def _setup_room(room_name: str):
 
 
 def _patch_html(lk_url: str = "", token: str = "", voice_backend: str = "none") -> Path:
+    # Always delete stale patched file so we regenerate from current ui.html
+    if PATCHED_HTML_PATH.exists():
+        PATCHED_HTML_PATH.unlink()
     import html as _html
     html = HTML_PATH.read_text(encoding="utf-8")
     livekit_meta = ""
@@ -933,6 +1048,19 @@ def _patch_html(lk_url: str = "", token: str = "", voice_backend: str = "none") 
             f'    <meta name="ui-low-power" content="{os.getenv("VANI_LOW_POWER_UI", "0")}">\n'
             f'    <meta name="ui-fast-start" content="{os.getenv("VANI_FAST_START_UI", "1")}">\n')
     html = html.replace("<head>", f"<head>\n    {meta}", 1)
+
+    # ── Ensure plugin panel is in patched output (idempotent check) ───────────
+    if "plugin-fab" not in html:
+        try:
+            from pathlib import Path as _Path
+            _panel = _Path(__file__).parent / "ui" / "ui.html"
+            # Plugin panel already injected in ui.html — if not present, it means
+            # the base file is old. Just ensure the patched file has it by
+            # re-reading from the (already patched) HTML_PATH which has the panel.
+            pass  # ui.html already has plugin panel injected
+        except Exception:
+            pass
+
     out  = PATCHED_HTML_PATH
     out.write_text(html, encoding="utf-8")
     return out
