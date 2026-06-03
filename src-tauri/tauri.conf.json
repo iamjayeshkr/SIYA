@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "dev.vani.os",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "cd ui && npm install --silent && npm run dev",
+    "beforeBuildCommand": "",
     "devUrl": "http://127.0.0.1:5500/ui",
-    "frontendDist": "../ui/dist"
+    "frontendDist": "http://127.0.0.1:5500/ui"
   },
   "app": {
     "windows": [
@@ -68,14 +68,14 @@
       "app"
     ],
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.png",
-      "icons/icon.icns"
+      "icons/128x128@2x.png",
+      "icons/128x128.png",
+      "icons/32x32.png"
     ],
     "category": "Productivity",
-    "shortDescription": "Vani \u2014 Your Personal AI",
+    "shortDescription": "Vani — Your Personal AI",
     "macOS": {
       "minimumSystemVersion": "12.0"
     }
