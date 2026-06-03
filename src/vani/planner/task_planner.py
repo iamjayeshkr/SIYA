@@ -48,6 +48,7 @@ _INTENT_AGENT_MAP: list[tuple[str, str]] = [
     ("SCREEN_READ",      "vision"),
     # Automation / learning
     ("STUDY_",           "automation"),
+    ("FINANCE_",         "finance"),
 ]
 
 # Direct intent → tool name (for logging/analysis — executor still uses _dispatch_intent)

@@ -62,6 +62,61 @@ _STUDY_STATUS_RE = __import__("re").compile(
     r"(kitna.*(time|bcha|hua)|timer.*(check|dekh|kya)|session.*(status|kitna|time))",
     __import__("re").IGNORECASE
 )
+# ── Finance CA intent patterns ────────────────────────────────────────────────
+_FINANCE_EMI_RE = re.compile(
+    r"(emi\s*(calculate|nikalo|kya|batao)|loan.*(emi|calculate|monthly|installment)|"
+    r"home\s*loan.*emi|car\s*loan.*emi|personal\s*loan.*emi|"
+    r"emi.*kya\s*(hoga|hai)|kitna\s*emi|monthly\s*(installment|payment).*loan)",
+    re.IGNORECASE,
+)
+_FINANCE_SIP_RE = re.compile(
+    r"(sip.*(calculate|returns?|kitna|future|value|result)|"
+    r"sip.*\d+.*year|mutual\s*fund.*return.*calculate)",
+    re.IGNORECASE,
+)
+_FINANCE_CALENDAR_RE = re.compile(
+    r"(gst.*(deadline|date|kab|filing)|itr.*(deadline|last\s*date|kab)|"
+    r"advance\s*tax.*(date|kab|deadline)|tds.*(return|deadline|kab)|"
+    r"compliance.*(calendar|dates?)|tax\s*(deadline|due\s*date)|"
+    r"filing.*(deadline|date))",
+    re.IGNORECASE,
+)
+_FINANCE_TAX_RE = re.compile(
+    r"(income\s*tax\s*(slab|rate|kya|kitna)|tax\s*(slab|bracket|rate)|"
+    r"itr.*(kab|kaise|file|types?|deadline)|80c|80d|hra\s*(deduction|exempt)|"
+    r"old\s*(vs|or)\s*new\s*regime|new\s*regime|tax\s*saving|"
+    r"section\s*8[0-9][a-z]|tax.*bachao|tax.*save|kitna\s*tax)",
+    re.IGNORECASE,
+)
+_FINANCE_INVEST_RE = re.compile(
+    r"(elss|ppf|nps|fd\s*(vs|or)|fixed\s*deposit\s*(vs|or)|"
+    r"invest.*(kahan|kaise|best|where|recommend)|"
+    r"mutual\s*fund.*(kaise|kharidna|recommend|types)|"
+    r"sip\s*vs\s*(fd|lumpsum|ppf)|"
+    r"portfolio.*(banao|suggest|help)|financial\s*planning|wealth.*creation|"
+    r"best.*investment|investment.*options?|demat\s*account|paise.*kahan\s*lagao)",
+    re.IGNORECASE,
+)
+_FINANCE_RATIO_RE = re.compile(
+    r"(p/?e\s*(ratio|kya|explain|matlab)|roe\s*(kya|explain|ratio)|"
+    r"ebitda\s*(margin|kya|explain)|debt.*(equity|ratio|kya)|"
+    r"current\s*ratio|eps\s*(kya|explain|ratio)|roce\s*(kya|explain)|"
+    r"financial\s*ratio|stock.*ratio|balance\s*sheet.*ratio)",
+    re.IGNORECASE,
+)
+_FINANCE_QUERY_RE = re.compile(
+    r"(ca\s*(ban|hai|bano|hoja|ki\s*tarah)|chartered\s*accountant|"
+    r"gst.*(kya|explain|kaise|rate|input|credit)|tds.*(kya|kaise|rate|explain)|"
+    r"balance\s*sheet.*(explain|kya|samjhao)|"
+    r"profit.*(loss|kya|statement)|cash\s*flow|depreciation\s*(kya|explain)|"
+    r"accounting.*(explain|basics?|kya)|journal\s*entry|"
+    r"financial\s*(statement|planning|advice|help|goal)|"
+    r"retirement.*(plan|savings?)|emergency\s*fund|"
+    r"capital\s*gain|ltcg|stcg|"
+    r"mujhe.*finance.*samjhao|finance.*gyaan|paise.*manage)",
+    re.IGNORECASE,
+)
+
 
 # ── Voice enrollment intent patterns ─────────────────────────────────────────
 # Matches English + Hinglish variants:
@@ -211,6 +266,22 @@ def _router_classify(query: str):
         return "STUDY_END", {}
     if _STUDY_STATUS_RE.search(q):
         return "STUDY_STATUS", {}
+
+    # ── Finance CA intents (EMI/SIP/Calendar before Tax to avoid prefix conflicts)
+    if _FINANCE_EMI_RE.search(q):
+        return "FINANCE_EMI", {"query": q}
+    if _FINANCE_SIP_RE.search(q):
+        return "FINANCE_SIP", {"query": q}
+    if _FINANCE_CALENDAR_RE.search(q):
+        return "FINANCE_CALENDAR", {"query": q}
+    if _FINANCE_TAX_RE.search(q):
+        return "FINANCE_TAX", {"query": q}
+    if _FINANCE_INVEST_RE.search(q):
+        return "FINANCE_INVEST", {"query": q}
+    if _FINANCE_RATIO_RE.search(q):
+        return "FINANCE_RATIO", {"query": q}
+    if _FINANCE_QUERY_RE.search(q):
+        return "FINANCE_QUERY", {"query": q}
 
     # Screen read
     if _is_screen_read_intent(q):
@@ -624,6 +695,10 @@ async def _dispatch_intent(intent: str, data, query: str) -> str:
     elif intent == "STUDY_STATUS":
         from vani.reasoning.tools.study_mode import study_status
         return await study_status.ainvoke({})
+    # ── Finance CA intents ────────────────────────────────────────────────────
+    elif intent.startswith("FINANCE_"):
+        from vani.reasoning.tools.finance_ca import handle_finance_intent
+        return await handle_finance_intent(intent, query, data if isinstance(data, dict) else {})
     # ── Voice enrollment intents ───────────────────────────────────────────────
     elif intent == "VOICE_ENROLL":
         return await _handle_voice_enroll()
