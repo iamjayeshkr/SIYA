@@ -859,6 +859,33 @@ body.connected .status-txt { color: var(--green); }
 </div>
 
 <script>
+// Tauri global helper wrappers for compatibility with vanilla/static HTML loading
+window.tauriInvoke = async function(cmd, args = {}) {
+  if (window.__TAURI__ && window.__TAURI__.core) {
+    try {
+      return await window.__TAURI__.core.invoke(cmd, args);
+    } catch (e) {
+      console.error(`[Tauri] Invoke error for '${cmd}':`, e);
+      throw e;
+    }
+  } else {
+    console.warn(`[Tauri] Invoke bypassed for '${cmd}' (Tauri global API not loaded).`);
+  }
+};
+
+window.tauriListen = async function(event, callback) {
+  if (window.__TAURI__ && window.__TAURI__.event) {
+    try {
+      return await window.__TAURI__.event.listen(event, callback);
+    } catch (e) {
+      console.error(`[Tauri] Listen error for '${event}':`, e);
+      throw e;
+    }
+  } else {
+    console.warn(`[Tauri] Listen bypassed for '${event}' (Tauri global API not loaded).`);
+  }
+};
+
 // ════════════════════════════════════════════════════════════
 //  VANI AVATAR ENGINE
 // ════════════════════════════════════════════════════════════
@@ -1336,8 +1363,7 @@ function startPywebviewPolling() {
 async function quit() {
   try {
     if ("__TAURI_INTERNALS__" in window) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("quit_app");
+      await window.tauriInvoke("quit_app");
     } else {
       await window.pywebview.api.quit();
     }
@@ -1349,8 +1375,7 @@ async function quit() {
 async function minimize() {
   try {
     if ("__TAURI_INTERNALS__" in window) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("minimize_window");
+      await window.tauriInvoke("minimize_window");
     } else {
       await fetch("http://127.0.0.1:5500/minimize", { method: "POST" });
     }
@@ -2415,6 +2440,783 @@ docFile.addEventListener('change', () => {
     startPluginPolling();
   });
 
+})();
+</script>
+
+<!-- MENTOR MODE STYLE ACCENTS -->
+<style>
+#mentor-console {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  width: 440px;
+  max-height: 80vh;
+  background: rgba(10, 8, 22, 0.96);
+  border: 1px solid rgba(196, 126, 255, 0.25);
+  border-radius: 18px;
+  box-shadow: 0 0 50px rgba(139, 92, 246, 0.15), 0 10px 40px rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateY(120%) scale(0.95);
+  opacity: 0;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+  pointer-events: none;
+  font-family: 'Exo 2', sans-serif;
+  color: #e2e8f0;
+}
+#mentor-console.open {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  pointer-events: all;
+}
+.mc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(196,126,255,0.15);
+  flex-shrink: 0;
+}
+.mc-title-row { display: flex; align-items: center; gap: 8px; }
+.mc-icon { font-size: 18px; }
+.mc-title { font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 600; color: #e9d5ff; letter-spacing: 0.5px; }
+.mc-close { background: none; border: none; color: rgba(196,126,255,0.5); cursor: pointer; font-size: 16px; transition: color 0.15s; }
+.mc-close:hover { color: #f87171; }
+.mc-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.mc-section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; color: #a78bfa; margin-bottom: 8px; letter-spacing: 0.5px; }
+.mc-label { font-size: 11px; color: #94a3b8; margin: 8px 0 4px; }
+.mc-select { width: 100%; background: #130f26; border: 1px solid rgba(196,126,255,0.2); border-radius: 8px; color: #e2e8f0; padding: 8px; font-size: 12px; font-family: inherit; margin-bottom: 12px; outline: none; }
+.mc-select:focus { border-color: #7c3aed; }
+.mc-btn-primary { width: 100%; background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; border-radius: 8px; color: #fff; padding: 10px; font-weight: 600; cursor: pointer; transition: transform 0.1s, opacity 0.1s; font-size: 12px; }
+.mc-btn-primary:active { transform: scale(0.98); }
+.mc-btn-secondary { width: 100%; background: rgba(196,126,255,0.1); border: 1px solid rgba(196,126,255,0.25); border-radius: 8px; color: #c47eff; padding: 8px; font-weight: 600; cursor: pointer; transition: background 0.15s; font-size: 12px; }
+.mc-btn-secondary:hover { background: rgba(196,126,255,0.18); }
+.mc-doc-name { font-size: 14px; font-weight: 600; color: #f472b6; margin-bottom: 12px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+.mc-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.mc-stat-card { background: rgba(196,126,255,0.05); border: 1px solid rgba(196,126,255,0.1); border-radius: 10px; padding: 10px; text-align: center; }
+.mc-stat-val { font-size: 18px; font-weight: 700; color: #e9d5ff; font-family: 'Rajdhani', sans-serif; }
+.mc-stat-lbl { font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-bottom: 6px; }
+.mc-progress-bar { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+.mc-progress-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #f472b6); border-radius: 2px; transition: width 0.3s ease; }
+.mc-tabs { display: flex; border-bottom: 1px solid rgba(196,126,255,0.1); margin-bottom: 10px; }
+.mc-tab { flex: 1; padding: 6px; background: none; border: none; color: #94a3b8; cursor: pointer; transition: all 0.15s; border-bottom: 2px solid transparent; font-size: 11px; }
+.mc-tab.active { color: #c47eff; border-bottom-color: #7c3aed; background: rgba(124,58,237,0.05); }
+.mc-explanation-box { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.6; max-height: 160px; overflow-y: auto; color: #cbd5e1; margin-bottom: 16px; scrollbar-width: thin; }
+.mc-quiz-card { background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.25); border-radius: 10px; padding: 12px; margin-bottom: 16px; }
+.mc-quiz-header { font-size: 11px; font-weight: 700; color: #a78bfa; text-transform: uppercase; margin-bottom: 6px; }
+.mc-quiz-q { font-size: 12px; font-weight: 600; color: #f1f5f9; margin-bottom: 10px; line-height: 1.5; }
+.mc-quiz-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.mc-quiz-opt { background: rgba(196,126,255,0.05); border: 1px solid rgba(196,126,255,0.15); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: #cbd5e1; cursor: pointer; text-align: left; transition: all 0.1s; }
+.mc-quiz-opt:hover { background: rgba(196,126,255,0.12); border-color: #7c3aed; }
+.mc-quiz-input-row { display: flex; gap: 8px; }
+.mc-input { flex: 1; background: #130f26; border: 1px solid rgba(196,126,255,0.2); border-radius: 6px; color: #e2e8f0; padding: 6px 10px; font-size: 12px; outline: none; }
+.mc-input:focus { border-color: #7c3aed; }
+.mc-btn-submit { background: #7c3aed; border: none; border-radius: 6px; color: #fff; padding: 6px 12px; font-weight: 600; cursor: pointer; font-size: 12px; }
+.mc-quiz-feedback { margin-top: 10px; background: rgba(0,0,0,0.15); border-radius: 6px; padding: 8px; font-size: 11px; line-height: 1.5; color: #fb7185; }
+.mc-actions { display: flex; flex-direction: column; gap: 8px; }
+
+#mentor-toggle {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  width: 44px;
+  height: 44px;
+  background: rgba(10, 8, 22, 0.9);
+  border: 1px solid rgba(196,126,255,0.3);
+  border-radius: 50%;
+  color: #c47eff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 9998;
+  box-shadow: 0 0 15px rgba(124, 58, 237, 0.3);
+  transition: transform 0.2s, background 0.2s;
+}
+#mentor-toggle:hover {
+  transform: scale(1.05);
+  background: rgba(124, 58, 237, 0.15);
+}
+</style>
+
+<!-- FAB button -->
+<button id="mentor-toggle" onclick="toggleMentorConsole()" title="Vani Document Mentor — Go Deep!">
+  🎓
+</button>
+
+<!-- MENTOR MODE CONSOLE -->
+<div id="mentor-console">
+  <!-- Header -->
+  <div class="mc-header">
+    <div class="mc-title-row">
+      <span class="mc-icon">🎓</span>
+      <span class="mc-title">Vani Study Mentor</span>
+    </div>
+    <button class="mc-close" onclick="toggleMentorConsole()">✕</button>
+  </div>
+
+  <!-- Body -->
+  <div class="mc-body">
+    <!-- Setup Mode -->
+    <div id="mc-setup-section" style="padding: 10px 0;">
+      <div class="mc-section-title">Initialize Study Session</div>
+      <div class="mc-label">Roast Intensity:</div>
+      <select id="mc-roast-select" class="mc-select">
+        <option value="Off">Off (Extremely warm/friendly)</option>
+        <option value="Light">Light (Mild teasing)</option>
+        <option value="Medium">Medium (Witty sarcasm)</option>
+        <option value="Savage">Savage (Savage educational roasting)</option>
+      </select>
+      <div class="mc-label">Study Mode:</div>
+      <select id="mc-mode-select" class="mc-select">
+        <option value="document">Document (Book / PDF / Doc)</option>
+        <option value="repository">Repository (Full Codebase mapping)</option>
+      </select>
+      <button class="mc-btn-primary" onclick="mentorStartSession()">Start Mentoring 🚀</button>
+    </div>
+
+    <!-- Active Mode -->
+    <div id="mc-active-section" style="display:none;">
+      <!-- Document Name -->
+      <div class="mc-doc-name" id="mc-active-doc">Loading doc...</div>
+
+      <!-- Stats Grid -->
+      <div class="mc-stats-grid">
+        <div class="mc-stat-card">
+          <div class="mc-stat-val" id="mc-stat-coverage">0.0%</div>
+          <div class="mc-stat-lbl">Coverage</div>
+          <div class="mc-progress-bar"><div class="mc-progress-fill" id="mc-fill-coverage" style="width: 0%"></div></div>
+        </div>
+        <div class="mc-stat-card">
+          <div class="mc-stat-val" id="mc-stat-mastery">0.0%</div>
+          <div class="mc-stat-lbl">Mastery</div>
+          <div class="mc-progress-bar"><div class="mc-progress-fill" id="mc-fill-mastery" style="width: 0%"></div></div>
+        </div>
+      </div>
+
+      <!-- Roadmap concept -->
+      <div class="mc-section-title">Current Topic: <span id="mc-curr-concept" style="color:#cbd5e1">None</span></div>
+      <div class="mc-tabs">
+        <button class="mc-tab active" onclick="switchExplanationTab('beginner')">Beginner</button>
+        <button class="mc-tab" onclick="switchExplanationTab('intermediate')">Intermediate</button>
+        <button class="mc-tab" onclick="switchExplanationTab('advanced')">Advanced</button>
+      </div>
+      <div class="mc-explanation-box" id="mc-explanation-text">No active explanation. Click 'Next Concept' or speak 'teach next concept' to start.</div>
+
+      <!-- Active quiz card -->
+      <div id="mc-quiz-card" class="mc-quiz-card" style="display:none;">
+        <div class="mc-quiz-header">Mastery Checkpoint</div>
+        <div class="mc-quiz-q" id="mc-quiz-question">Question text here...</div>
+        <div class="mc-quiz-options" id="mc-quiz-options-area"></div>
+        <div class="mc-quiz-input-row" id="mc-quiz-input-row">
+          <input type="text" id="mc-quiz-answer-input" placeholder="Type your response here..." class="mc-input">
+          <button class="mc-btn-submit" onclick="mentorSubmitAnswer()">Submit</button>
+        </div>
+        <div class="mc-quiz-feedback" id="mc-quiz-feedback" style="display:none;">Feedback goes here...</div>
+      </div>
+
+      <!-- Buttons -->
+      <div class="mc-actions">
+        <button class="mc-btn-primary" onclick="mentorNextTopic()">Next Concept ➔</button>
+        <button class="mc-btn-secondary" style="margin-top: 4px;" onclick="mentorShowReport()">View Summary Report</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _mentorConsoleOpen = false;
+let _mentorExplanationData = {};
+let _activeExpTab = 'beginner';
+let _activeQuizId = '';
+
+window.toggleMentorConsole = function() {
+  _mentorConsoleOpen = !_mentorConsoleOpen;
+  document.getElementById('mentor-console').classList.toggle('open', _mentorConsoleOpen);
+  if (_mentorConsoleOpen) {
+    refreshMentorStatus();
+  }
+};
+
+async function refreshMentorStatus() {
+  try {
+    const r = await fetch('http://localhost:5500/mentor/status');
+    const s = await r.json();
+    const setupSection = document.getElementById('mc-setup-section');
+    const activeSection = document.getElementById('mc-active-section');
+    
+    if (s.active) {
+      setupSection.style.display = 'none';
+      activeSection.style.display = 'block';
+      
+      document.getElementById('mc-active-doc').textContent = s.filename;
+      document.getElementById('mc-stat-coverage').textContent = s.coverage_score.toFixed(1) + '%';
+      document.getElementById('mc-fill-coverage').style.width = s.coverage_score + '%';
+      document.getElementById('mc-stat-mastery').textContent = s.mastery_score.toFixed(1) + '%';
+      document.getElementById('mc-fill-mastery').style.width = s.mastery_score + '%';
+      document.getElementById('mc-curr-concept').textContent = s.current_concept;
+    } else {
+      setupSection.style.display = 'block';
+      activeSection.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+window.mentorStartSession = async function() {
+  const roast = document.getElementById('mc-roast-select').value;
+  const mode = document.getElementById('mc-mode-select').value;
+  
+  try {
+    const r = await fetch('http://localhost:5500/mentor/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roast_mode: roast, mode_type: mode })
+    });
+    const data = await r.json();
+    if (data.ok) {
+      refreshMentorStatus();
+      addBubble(`Vani, start study session on this document with ${roast} roast!`, 'user');
+      addBubble(`Study session loaded. Pehla topic start karne ke liye 'Next Concept' click karo ya bolo 'teach next concept'.`, 'vani');
+    } else {
+      alert("Error: " + data.reply);
+    }
+  } catch(e) {}
+};
+
+window.mentorNextTopic = async function() {
+  const area = document.getElementById('mc-explanation-text');
+  area.textContent = "Loading explanation and quiz...";
+  
+  try {
+    const r = await fetch('http://localhost:5500/mentor/next', { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) {
+      if (data.finished) {
+        area.innerHTML = `<strong>All topics mastered! Final report generated.</strong>`;
+        addBubble("Final report generated. You've completed learning this document!", 'vani');
+        document.getElementById('mc-quiz-card').style.display = 'none';
+        return;
+      }
+      
+      _mentorExplanationData = {
+        beginner: data.narration,
+        intermediate: data.narration,
+        advanced: data.narration
+      };
+      
+      _activeExpTab = 'beginner';
+      switchExplanationTab('beginner');
+      
+      document.getElementById('mc-curr-concept').textContent = data.concept;
+      
+      const q = data.quiz;
+      _activeQuizId = q.id;
+      document.getElementById('mc-quiz-question').textContent = q.question;
+      const optsArea = document.getElementById('mc-quiz-options-area');
+      optsArea.innerHTML = '';
+      
+      if (q.options && q.options.length > 0) {
+        q.options.forEach((opt, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'mc-quiz-opt';
+          btn.textContent = `${String.fromCharCode(65+idx)}. ${opt}`;
+          btn.onclick = () => mentorSelectOption(String.fromCharCode(65+idx));
+          optsArea.appendChild(btn);
+        });
+        document.getElementById('mc-quiz-input-row').style.display = 'none';
+      } else {
+        document.getElementById('mc-quiz-input-row').style.display = 'flex';
+      }
+      
+      document.getElementById('mc-quiz-card').style.display = 'block';
+      document.getElementById('mc-quiz-feedback').style.display = 'none';
+      document.getElementById('mc-quiz-answer-input').value = '';
+      
+      addBubble(`Explain concept: ${data.concept}`, 'user');
+      addBubble(data.narration, 'vani');
+      if (typeof speakBrowserFallback === 'function') {
+        speakBrowserFallback(data.narration, { limit: 900 });
+      }
+      
+      refreshMentorStatus();
+    }
+  } catch(e) {}
+};
+
+window.switchExplanationTab = function(tab) {
+  _activeExpTab = tab;
+  document.querySelectorAll('.mc-tab').forEach((btn, i) => {
+    btn.classList.toggle('active', ['beginner','intermediate','advanced'][i] === tab);
+  });
+  document.getElementById('mc-explanation-text').textContent = _mentorExplanationData[tab] || "No content.";
+};
+
+window.mentorSelectOption = function(opt) {
+  mentorSubmitAnswer(opt);
+};
+
+window.mentorSubmitAnswer = async function(selectedOpt) {
+  const ansInput = document.getElementById('mc-quiz-answer-input');
+  const answer = selectedOpt || ansInput.value.trim();
+  if (!answer) return;
+  
+  const fd = document.getElementById('mc-quiz-feedback');
+  fd.style.display = 'block';
+  fd.textContent = "Checking answer...";
+  
+  try {
+    const r = await fetch('http://localhost:5500/mentor/quiz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quiz_id: _activeQuizId, answer: answer })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      fd.innerHTML = `<strong>Result: ${d.passed ? 'PASSED' : 'TRY AGAIN'}</strong><br>${d.feedback}`;
+      addBubble(d.feedback, 'vani');
+      if (typeof speakBrowserFallback === 'function') {
+        speakBrowserFallback(d.feedback, { limit: 900 });
+      }
+      refreshMentorStatus();
+    }
+  } catch(e) {}
+};
+
+window.mentorShowReport = async function() {
+  try {
+    const r = await fetch('http://localhost:5500/mentor/report');
+    const d = await r.json();
+    if (d.ok) {
+      const reportText = d.report;
+      addBubble("Generate final study report", 'user');
+      addBubble(reportText, 'vani');
+    }
+  } catch(e) {}
+};
+</script>
+
+<!-- ========================================== -->
+<!--  RESPONSE OVERLAY MODE MODULE             -->
+<!-- ========================================== -->
+<style>
+/* Reset state and hide UI when overlay mode is active */
+body.overlay-active {
+  background: transparent !important;
+}
+
+body.overlay-active #avatar-container,
+body.overlay-active #video-overlay {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.overlay-active #header,
+body.overlay-active .header,
+body.overlay-active .hud,
+body.overlay-active #panel-toggle,
+body.overlay-active #text-panel,
+body.overlay-active #mentor-toggle,
+body.overlay-active #mentor-console {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.3s ease;
+}
+
+/* Floating Response Bar Container */
+#response-overlay {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-80px);
+  width: 180px;
+  height: 48px;
+  background: rgba(10, 8, 22, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(196, 126, 255, 0.3);
+  border-radius: 24px;
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.25), 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: #e2e8f0;
+  font-family: 'Rajdhani', sans-serif;
+  z-index: 999999;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition: width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+              transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+              opacity 0.3s ease,
+              border-color 0.3s ease;
+}
+
+/* Make overlay visible only in active states under overlay mode */
+body.overlay-active.listening #response-overlay,
+body.overlay-active.thinking #response-overlay,
+body.overlay-active.speaking #response-overlay {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Morph widths and border accents */
+body.overlay-active.listening #response-overlay {
+  width: 180px;
+  border-color: rgba(34, 197, 94, 0.5);
+}
+body.overlay-active.thinking #response-overlay {
+  width: 180px;
+  border-color: rgba(168, 85, 247, 0.5);
+}
+body.overlay-active.speaking #response-overlay {
+  width: 380px;
+  border-color: rgba(244, 114, 182, 0.5);
+}
+
+/* Pulse Node (Thinking state) */
+.pulse-node {
+  width: 12px;
+  height: 12px;
+  background: #a855f7;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+}
+.pulse-node::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  right: -6px;
+  bottom: -6px;
+  border: 2px solid rgba(168, 85, 247, 0.5);
+  border-radius: 50%;
+  animation: pulse-anim 1.2s infinite ease-out;
+}
+@keyframes pulse-anim {
+  0% { transform: scale(0.6); opacity: 1; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+/* Microphone glow (Listening state) */
+.mic-dot {
+  font-size: 16px;
+  flex-shrink: 0;
+  animation: mic-glow 1.5s infinite alternate ease-in-out;
+}
+@keyframes mic-glow {
+  0% { transform: scale(0.9); filter: drop-shadow(0 0 2px rgba(34, 197, 94, 0.4)); }
+  100% { transform: scale(1.1); filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.8)); }
+}
+
+/* Mini wave (Speaking state) */
+.mini-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.mini-wave-bar {
+  width: 2px;
+  height: 100%;
+  background: #f472b6;
+  border-radius: 1px;
+  animation: mini-wave-anim 0.5s infinite alternate ease-in-out;
+  animation-delay: var(--d);
+}
+@keyframes mini-wave-anim {
+  0% { transform: scaleY(0.3); }
+  100% { transform: scaleY(1.0); }
+}
+
+/* State-based visibility rules */
+#overlay-mic-icon, #overlay-pulse-node, #overlay-mini-wave, #overlay-transcript-txt {
+  display: none;
+}
+body.overlay-active.listening #overlay-mic-icon { display: block; }
+body.overlay-active.thinking #overlay-pulse-node { display: block; }
+body.overlay-active.speaking #overlay-mini-wave { display: flex; }
+
+#overlay-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+}
+#overlay-status-txt {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+body.overlay-active.listening #overlay-status-txt { color: #4ade80; }
+body.overlay-active.thinking #overlay-status-txt { color: #c084fc; }
+body.overlay-active.speaking #overlay-status-txt { color: #f472b6; font-size: 9px; margin-bottom: 2px; }
+
+#overlay-transcript-txt {
+  font-size: 12px;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Exo 2', sans-serif;
+}
+body.overlay-active.speaking #overlay-transcript-txt { display: block; }
+
+#overlay-close-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: color 0.2s, background 0.2s;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+#overlay-close-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
+}
+</style>
+
+<div id="response-overlay" onclick="expandToFullUI()" title="Click to Expand UI">
+  <div id="overlay-status-icon">
+    <div id="overlay-mic-icon" class="mic-dot">🎤</div>
+    <div id="overlay-pulse-node" class="pulse-node"></div>
+    <div id="overlay-mini-wave" class="mini-wave">
+      <div class="mini-wave-bar" style="--d:0.4s"></div>
+      <div class="mini-wave-bar" style="--d:0.6s"></div>
+      <div class="mini-wave-bar" style="--d:0.3s"></div>
+      <div class="mini-wave-bar" style="--d:0.5s"></div>
+    </div>
+  </div>
+  <div id="overlay-content">
+    <div id="overlay-status-txt">Listening</div>
+    <div id="overlay-transcript-txt"></div>
+  </div>
+  <button id="overlay-close-btn" onclick="closeOverlay(event)" title="Close Overlay">✕</button>
+</div>
+
+<script>
+(function() {
+  const isOverlayWindow = window.location.search.includes('overlay=true');
+  let _overlayActive = isOverlayWindow;
+  let _idleTimeout = null;
+  let _isHovered = false;
+  let _lastResponseLength = 0;
+
+  function getTimeoutDuration(len) {
+    if (len < 60) {
+      return 8000;  // Short response: 8 seconds
+    } else if (len < 200) {
+      return 15000; // Medium response: 15 seconds
+    } else {
+      return 25000; // Long response: 25 seconds
+    }
+  }
+
+  function startAutoHideTimer(duration) {
+    if (_idleTimeout) clearTimeout(_idleTimeout);
+    if (_isHovered) return; // Hover pauses auto-hide
+
+    _idleTimeout = setTimeout(() => {
+      if (isOverlayWindow) {
+        if ("__TAURI_INTERNALS__" in window) {
+          window.tauriInvoke("set_overlay_visible", { visible: false });
+        }
+      }
+      document.body.classList.remove('listening', 'thinking', 'speaking');
+    }, duration);
+  }
+
+  function updateOverlay(s) {
+    if (!_overlayActive) return;
+    
+    const body = document.body;
+    
+    if (_idleTimeout) {
+      clearTimeout(_idleTimeout);
+      _idleTimeout = null;
+    }
+
+    body.classList.remove('listening', 'thinking', 'speaking');
+    
+    const isThinking = !!s.processing || s.status === 'Thinking...' || 
+      ['Searching', 'Reading PDF', 'Opening Browser', 'Executing Tool'].includes(s.status);
+
+    if (s.speaking) {
+      body.classList.add('speaking');
+      document.getElementById('overlay-status-txt').textContent = s.status && s.status !== 'Speaking...' ? s.status : 'Speaking';
+      document.getElementById('overlay-transcript-txt').textContent = s.transcript || 'Speaking...';
+      if (s.transcript) {
+        _lastResponseLength = s.transcript.length;
+      }
+      
+      if (isOverlayWindow && "__TAURI_INTERNALS__" in window) {
+        window.tauriInvoke("set_overlay_visible", { visible: true });
+      }
+    } else if (isThinking) {
+      body.classList.add('thinking');
+      document.getElementById('overlay-status-txt').textContent = s.status || 'Thinking...';
+      
+      if (isOverlayWindow && "__TAURI_INTERNALS__" in window) {
+        window.tauriInvoke("set_overlay_visible", { visible: true });
+      }
+    } else if (s.listening) {
+      body.classList.add('listening');
+      document.getElementById('overlay-status-txt').textContent = 'Listening';
+      
+      if (isOverlayWindow && "__TAURI_INTERNALS__" in window) {
+        window.tauriInvoke("set_overlay_visible", { visible: true });
+      }
+    } else {
+      // Idle state
+      const duration = getTimeoutDuration(_lastResponseLength);
+      startAutoHideTimer(duration);
+    }
+  }
+
+  window.enableOverlayMode = function() {
+    _overlayActive = true;
+    document.body.classList.add('overlay-active');
+    
+    const isSpeaking = document.body.classList.contains('speaking');
+    const isListening = document.body.classList.contains('listening');
+    const statusEl = document.getElementById('status-text');
+    const statusVal = statusEl ? statusEl.textContent : 'Ready';
+    
+    updateOverlay({
+      speaking: isSpeaking,
+      listening: isListening,
+      processing: document.body.classList.contains('thinking') || statusVal === 'Thinking...',
+      status: statusVal,
+      transcript: ''
+    });
+  };
+
+  window.expandToFullUI = function() {
+    _overlayActive = false;
+    document.body.classList.remove('overlay-active', 'listening', 'thinking', 'speaking');
+    if (_idleTimeout) {
+      clearTimeout(_idleTimeout);
+      _idleTimeout = null;
+    }
+    if (window.room && window.room.state === 'connected') {
+      document.body.classList.add('connected');
+    }
+    if ("__TAURI_INTERNALS__" in window) {
+      window.tauriInvoke("expand_to_full_ui");
+    }
+  };
+
+  window.closeOverlay = function(event) {
+    if (event) event.stopPropagation(); // Stop click expanding the UI
+    if (isOverlayWindow && "__TAURI_INTERNALS__" in window) {
+      window.tauriInvoke("set_overlay_visible", { visible: false });
+    }
+    document.body.classList.remove('listening', 'thinking', 'speaking');
+    if (_idleTimeout) {
+      clearTimeout(_idleTimeout);
+      _idleTimeout = null;
+    }
+  };
+
+  // Intercept window minimize to collapse into overlay mode
+  window.minimize = function() {
+    if ("__TAURI_INTERNALS__" in window) {
+      window.tauriInvoke("collapse_to_overlay");
+    } else {
+      enableOverlayMode();
+    }
+  };
+
+  // Esc key handler
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (isOverlayWindow) {
+        expandToFullUI();
+      } else {
+        window.minimize();
+      }
+    }
+  });
+
+  // Setup Hover Listeners
+  const overlayEl = document.getElementById('response-overlay');
+  if (overlayEl) {
+    overlayEl.addEventListener('mouseenter', () => {
+      _isHovered = true;
+      if (_idleTimeout) {
+        clearTimeout(_idleTimeout);
+        _idleTimeout = null;
+      }
+    });
+
+    overlayEl.addEventListener('mouseleave', () => {
+      _isHovered = false;
+      const isSpeaking = document.body.classList.contains('speaking');
+      const isThinking = document.body.classList.contains('thinking');
+      const isListening = document.body.classList.contains('listening');
+      if (!isSpeaking && !isThinking && !isListening) {
+        const duration = getTimeoutDuration(_lastResponseLength);
+        startAutoHideTimer(duration);
+      }
+    });
+  }
+
+  // Decorate state change hook
+  const origUpdateState = window.updateState;
+  window.updateState = function(s) {
+    if (origUpdateState) origUpdateState(s);
+    updateOverlay(s);
+  };
+
+  // Bypass LiveKit connection entirely if this is the overlay window
+  if (isOverlayWindow) {
+    enableOverlayMode();
+    window.connectLiveKit = async function() {
+      console.log("[Overlay] LiveKit connection bypassed.");
+      connectStateWs();
+    };
+  } else {
+    // Main Window starts with full UI visible (restores file upload and other original features)
+    _overlayActive = false;
+    document.body.classList.remove('overlay-active');
+  }
+
+  // Native Tauri event listener fallback/override for absolute reliability
+  if ("__TAURI_INTERNALS__" in window) {
+    window.tauriListen("vani-state", (event) => {
+      const s = event.payload;
+      if (s) {
+        if (s.connected && typeof hideOverlay === "function") {
+          hideOverlay();
+        }
+        if (typeof updateState === "function") {
+          updateState(s);
+        }
+        updateOverlay(s);
+      }
+    }).catch(err => {
+      console.error("[TauriEvent] Failed to load Tauri event listener:", err);
+    });
+  }
 })();
 </script>
 

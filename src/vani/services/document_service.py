@@ -84,6 +84,94 @@ def _extract_text_file(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _extract_epub(data: bytes) -> str:
+    """Extract text from EPUB files without external libraries."""
+    import zipfile
+    import io
+    import re
+    try:
+        texts = []
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            content_files = [
+                name for name in z.namelist()
+                if name.endswith((".xhtml", ".html", ".htm", ".xml"))
+                and not name.endswith("container.xml")
+                and not name.endswith("toc.ncx")
+            ]
+            content_files.sort()
+            for name in content_files:
+                html_content = z.read(name).decode("utf-8", errors="ignore")
+                # Remove script/style blocks
+                clean_html = re.sub(r"<(script|style)[^>]*>([\s\S]*?)<\/\1>", "", html_content, flags=re.I)
+                clean_text = re.sub(r"<[^>]+>", " ", clean_html)
+                clean_text = re.sub(r"\s+", " ", clean_text).strip()
+                if clean_text:
+                    texts.append(clean_text)
+        return "\n\n".join(texts).strip()
+    except Exception as e:
+        logger.warning(f"[DOC_SERVICE] EPUB extract failed: {e}")
+        return ""
+
+
+def _extract_pptx(data: bytes) -> str:
+    """Extract text from PPTX slides without python-pptx library."""
+    import zipfile
+    import io
+    import re
+    try:
+        texts = []
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            slide_files = [
+                name for name in z.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            ]
+            def _slide_num(name):
+                nums = re.findall(r"\d+", name)
+                return int(nums[0]) if nums else 0
+            slide_files.sort(key=_slide_num)
+            for name in slide_files:
+                slide_xml = z.read(name).decode("utf-8", errors="ignore")
+                text_runs = re.findall(r"<a:t[^>]*>([^<]*)</a:t>", slide_xml)
+                slide_text = " ".join(text_runs).strip()
+                if slide_text:
+                    slide_name = Path(name).stem.capitalize()
+                    texts.append(f"=== {slide_name} ===\n{slide_text}")
+        return "\n\n".join(texts).strip()
+    except Exception as e:
+        logger.warning(f"[DOC_SERVICE] PPTX extract failed: {e}")
+        return ""
+
+
+def _extract_repository(data: bytes) -> str:
+    """Extract and combine source files from a repository ZIP."""
+    import zipfile
+    import io
+    try:
+        texts = []
+        extensions = {
+            ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json",
+            ".md", ".java", ".cpp", ".c", ".h", ".cs", ".go", ".rs",
+            ".swift", ".kt", ".sh", ".yaml", ".yml"
+        }
+        ignored_dirs = {".git", "node_modules", "venv", ".venv", "dist", "build", "__pycache__"}
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for name in sorted(z.namelist()):
+                path = Path(name)
+                if any(part in ignored_dirs for part in path.parts):
+                    continue
+                if path.suffix.lower() in extensions:
+                    try:
+                        content = z.read(name).decode("utf-8", errors="ignore")
+                        if content.strip():
+                            texts.append(f"=== FILE: {name} ===\n{content}")
+                    except Exception:
+                        continue
+        return "\n\n".join(texts).strip()
+    except Exception as e:
+        logger.warning(f"[DOC_SERVICE] Repository ZIP extract failed: {e}")
+        return ""
+
+
 def extract_text(filename: str, data: bytes, browser_mime: str = "") -> str:
     """
     Dispatch to the right extractor based on filename extension.
@@ -97,6 +185,15 @@ def extract_text(filename: str, data: bytes, browser_mime: str = "") -> str:
     if ext in {".docx", ".doc"}:
         return _extract_docx(data)
 
+    if ext == ".epub":
+        return _extract_epub(data)
+
+    if ext in {".pptx", ".ppt"}:
+        return _extract_pptx(data)
+
+    if ext == ".zip":
+        return _extract_repository(data)
+
     if ext in {".txt", ".md", ".markdown", ".csv", ".tsv",
                ".json", ".py", ".js", ".ts", ".html", ".css",
                ".xml", ".rtf", ".odt", ""}:
@@ -104,6 +201,7 @@ def extract_text(filename: str, data: bytes, browser_mime: str = "") -> str:
 
     # Unknown — try as text
     return _extract_text_file(data)
+
 
 
 # ── Main handler ──────────────────────────────────────────────────────────────

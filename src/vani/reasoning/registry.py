@@ -24,6 +24,10 @@ from vani.reasoning.tools.youtube import youtube_control
 from vani.reasoning.tools.study_mode import (
     start_study_session, end_study_session, study_status,
 )
+from vani.reasoning.tools.mentor_mode import (
+    start_mentor_mode, mentor_teach_next_concept, mentor_quiz_answer,
+    mentor_status, mentor_toggle_roast, mentor_final_report,
+)
 from vani.reasoning.screen import (
     read_screen, learn_this, learn_name, google_search, get_weather,
 )
@@ -73,6 +77,12 @@ _TOOLS: dict = {
     "start_study_session":    start_study_session,
     "end_study_session":      end_study_session,
     "study_status":           study_status,
+    "start_mentor_mode":          start_mentor_mode,
+    "mentor_teach_next_concept":  mentor_teach_next_concept,
+    "mentor_quiz_answer":         mentor_quiz_answer,
+    "mentor_status":              mentor_status,
+    "mentor_toggle_roast":        mentor_toggle_roast,
+    "mentor_final_report":        mentor_final_report,
 }
 
 # FIX 19: Aliases split into a separate dict so real tools are enumerable
@@ -351,4 +361,10 @@ learn_this(content, raw)                   - Fact/preference/quiz permanently sa
 start_study_session(subject, duration_min) - Study session shuru karo — DND on, tabs band, timer start
 end_study_session(reason)                  - Study session khatam karo, stats dikhao
 study_status()                             - Timer check karo, kitna time bacha hai — "yaad rakhna", "remember this", "seekho", "baad mein puchna" — "screen dekho", "yeh kya hai", "explain this"
+start_mentor_mode(roast_mode, mode_type)   - Start Vani Document/Repository Mentor Mode study session
+mentor_teach_next_concept()                - Select and explain the next unmastered concept on the roadmap
+mentor_quiz_answer(user_answer)            - Submit user answer for current concept quiz evaluation
+mentor_status()                            - Check study session statistics and progress dashboard
+mentor_toggle_roast(level)                 - Change Roast Mode level (Off, Light, Medium, Savage)
+mentor_final_report()                      - Generate final study summary report once coverage is 100%
 """

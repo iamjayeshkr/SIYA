@@ -76,7 +76,7 @@ cargo tauri dev
 ```
 
 Tauri opens a native window at `http://localhost:1420`.
-The global hotkey `Cmd+Shift+Space` toggles show/hide.
+The global hotkey `Cmd+Shift+K` toggles show/hide.
 React hot-reloads on UI changes.
 The Python backend must be running for real data; the UI falls back to mock
 data automatically when running in a plain browser.

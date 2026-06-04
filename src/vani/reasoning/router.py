@@ -171,6 +171,32 @@ _CLEAR_DOCUMENT_MEMORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── Mentor Mode intent patterns ──────────────────────────────────────────────
+_MENTOR_START_RE = re.compile(
+    r"(mentor\s*(mode|session)?\s*(start|shuru|run|chalao|lagao)|study\s*(this)?\s*(pdf|book|document|repo|codebase)|learn\s*(this)?\s*(pdf|book|document|repo|codebase))",
+    re.IGNORECASE
+)
+_MENTOR_TEACH_RE = re.compile(
+    r"(teach\s*(next|next\s*concept|next\s*topic)?|explain\s*(next|next\s*concept|next\s*topic)?|aage\s*(padhao|samjhao)|next\s*concept|next\s*topic)",
+    re.IGNORECASE
+)
+_MENTOR_ANSWER_RE = re.compile(
+    r"^(my\s*answer\s*is|answer\s*is|correct\s*answer\s*is|check\s*my\s*answer|option\s*[a-d]\s*hai|option\s*[a-d]\s*he)\b",
+    re.IGNORECASE
+)
+_MENTOR_STATUS_RE = re.compile(
+    r"(mentor\s*status|progress\s*check|study\s*score|active\s*roadmap|mentor\s*dashboard)",
+    re.IGNORECASE
+)
+_MENTOR_ROAST_RE = re.compile(
+    r"(roast\s*me|roast\s*toggle|change\s*roast\s*(level)?\s*to\s*(off|light|medium|savage)|stop\s*roasting)",
+    re.IGNORECASE
+)
+_MENTOR_REPORT_RE = re.compile(
+    r"(generate\s*final\s*(study)?\s*report|mentor\s*report|roadmap\s*compile)",
+    re.IGNORECASE
+)
+
 # ── Instagram intent patterns ─────────────────────────────────────────────────
 _INSTAGRAM_SEND_RE = re.compile(
     r"(?:"
@@ -272,6 +298,23 @@ def _router_classify(query: str):
         return "VOICE_ENROLL", {}
     if _CLEAR_DOCUMENT_MEMORY_RE.search(q):
         return "CLEAR_DOCUMENT_MEMORY", {}
+
+    # Mentor Mode checks
+    if _MENTOR_START_RE.search(q):
+        roast_m = re.search(r"\b(off|light|medium|savage)\b", q, re.IGNORECASE)
+        mode_m = "repository" if any(w in ql for w in ["repo", "codebase", "repository", "code"]) else "document"
+        return "MENTOR_START", {"roast_mode": roast_m.group(0).capitalize() if roast_m else "Off", "mode_type": mode_m}
+    if _MENTOR_TEACH_RE.search(q):
+        return "MENTOR_TEACH", {}
+    if _MENTOR_ANSWER_RE.search(q) or (ql.startswith("option ") and len(ql) <= 10):
+        return "MENTOR_ANSWER", q.strip()
+    if _MENTOR_STATUS_RE.search(q):
+        return "MENTOR_STATUS", {}
+    if _MENTOR_ROAST_RE.search(q):
+        lvl_m = re.search(r"\b(off|light|medium|savage)\b", q, re.IGNORECASE)
+        return "MENTOR_ROAST", lvl_m.group(0).capitalize() if lvl_m else "Off"
+    if _MENTOR_REPORT_RE.search(q):
+        return "MENTOR_REPORT", {}
 
     # Study mode intents
     if _STUDY_START_RE.search(q):
@@ -726,6 +769,24 @@ async def _dispatch_intent(intent: str, data, query: str) -> str:
         from vani.memory.human_memory import clear_active_document
         clear_active_document()
         return "✅ Document memory clear ho gaya. Ab main isse nahi jaanta."
+    elif intent == "MENTOR_START":
+        from vani.reasoning.tools.mentor_mode import start_mentor_mode
+        return await start_mentor_mode.ainvoke(data)
+    elif intent == "MENTOR_TEACH":
+        from vani.reasoning.tools.mentor_mode import mentor_teach_next_concept
+        return await mentor_teach_next_concept.ainvoke({})
+    elif intent == "MENTOR_ANSWER":
+        from vani.reasoning.tools.mentor_mode import mentor_quiz_answer
+        return await mentor_quiz_answer.ainvoke({"user_answer": data})
+    elif intent == "MENTOR_STATUS":
+        from vani.reasoning.tools.mentor_mode import mentor_status
+        return await mentor_status.ainvoke({})
+    elif intent == "MENTOR_ROAST":
+        from vani.reasoning.tools.mentor_mode import mentor_toggle_roast
+        return await mentor_toggle_roast.ainvoke({"level": data})
+    elif intent == "MENTOR_REPORT":
+        from vani.reasoning.tools.mentor_mode import mentor_final_report
+        return await mentor_final_report.ainvoke({})
     elif intent == "INSTAGRAM_SEND":
         contact, message = data
         from vani.reasoning.tools.messaging import instagram_send

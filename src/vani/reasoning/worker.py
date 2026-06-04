@@ -245,6 +245,21 @@ async def _run_single_tool(query: str, future: "asyncio.Future"):
     async with sem:
         try:
             logger.info(f"[Worker] ▶ Twin Brain task start: '{query}'")
+            # Update status to the specific overlay tool action
+            try:
+                from vani.app import _patched_state_update
+                q_lower = query.lower()
+                action = "Executing Tool"
+                if any(k in q_lower for k in ("pdf", "document", "file", "read file", "book", "pptx", "epub", "mentor", "learn")):
+                    action = "Reading PDF"
+                elif any(k in q_lower for k in ("browser", "website", "open", "url", "chrome", "safari", "tab")):
+                    action = "Opening Browser"
+                elif any(k in q_lower for k in ("search", "google", "find", "weather", "web", "internet")):
+                    action = "Searching"
+                _patched_state_update(dict(status=action))
+            except Exception:
+                pass
+
             # ── Try Worker Twin (PlannerBrain) ────────────────────────────────
             result = None
 
@@ -389,6 +404,11 @@ async def say_to_user(text: str, limit: "int | None" = None):
         speech_text = _speech_safe_text(text, limit=limit)
         speech_text = _normalize_for_tts(speech_text)   # ← Hinglish TTS fix
         logger.info(f"[MESSAGING] Speaking to user: {speech_text}")
+        try:
+            from vani.app import _patched_state_update
+            _patched_state_update(dict(transcript=speech_text))
+        except Exception:
+            pass
         # generate_reply works with RealtimeModel; session.say() requires a separate TTS model
         try:
             handle = _session_ref.generate_reply(

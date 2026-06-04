@@ -103,6 +103,7 @@ state = {
     "connected":  False,
     "text_ready": False,
     "status":     "Starting up...",
+    "transcript": "",
 }
 
 # ── WebSocket push manager ─────────────────────────────────────────────────────
@@ -592,6 +593,117 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json(500, {"ok": False, "reason": str(exc)})
 
+        elif self.path == "/mentor/start":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length)) if length > 0 else {}
+                roast_mode = body.get("roast_mode", "Off")
+                mode_type = body.get("mode_type", "document")
+                
+                from vani.memory.human_memory import latest_temp_document_snapshot
+                snapshot = latest_temp_document_snapshot(max_chars=None)
+                if not snapshot or not snapshot.get("id"):
+                    self._send_json(400, {"ok": False, "reply": "Pehle document upload karo."})
+                    return
+                
+                from vani.services.mentor_service import start_mentor_session
+                session = start_mentor_session(
+                    filename=snapshot["filename"],
+                    text=snapshot["full_text"],
+                    roast_mode=roast_mode,
+                    mode_type=mode_type,
+                )
+                self._send_json(200, {"ok": True, "session": session})
+            except Exception as e:
+                self._send_json(500, {"ok": False, "reply": str(e)})
+
+        elif self.path == "/mentor/next":
+            try:
+                from vani.memory.mentor_memory import get_active_session, update_session
+                from vani.services.mentor_service import select_next_concept, get_concept_details, TEACHING_STRATEGIES, generate_concept_explanation, generate_mastery_quiz
+                session = get_active_session()
+                if not session:
+                    self._send_json(400, {"ok": False, "reply": "No active mentor session."})
+                    return
+                doc_id = session["document_id"]
+                next_cid = select_next_concept(doc_id)
+                if not next_cid:
+                    from vani.services.mentor_service import compile_final_mastery_report
+                    report = compile_final_mastery_report(doc_id)
+                    self._send_json(200, {"ok": True, "finished": True, "report": report, "reply": "Congrats! All concepts mastered."})
+                    return
+                
+                update_session(doc_id, current_concept_id=next_cid)
+                concept = get_concept_details(next_cid)
+                concept_name = concept["name"] if concept else "Concept"
+                attempts = concept.get("attempts", 0) if concept else 0
+                strategy = TEACHING_STRATEGIES[attempts % len(TEACHING_STRATEGIES)]
+                
+                narration, mermaid = generate_concept_explanation(next_cid, strategy, "Intermediate" if attempts > 0 else "Beginner")
+                
+                # Push diagram to UI
+                try:
+                    from vani.ui.teach_bridge import send_teach_visual
+                    asyncio.run(send_teach_visual({
+                        "concept": concept_name,
+                        "visual_type": "diagram",
+                        "mermaid_code": mermaid,
+                        "narration": narration,
+                        "category": "humor" if session["roast_mode"] > 0 else "motivation",
+                        "subject": "general",
+                        "memory_context": [session["filename"]],
+                    }))
+                except Exception:
+                    pass
+                
+                quiz = generate_mastery_quiz(next_cid)
+                self._send_json(200, {
+                    "ok": True,
+                    "finished": False,
+                    "concept": concept_name,
+                    "strategy": strategy,
+                    "narration": narration,
+                    "mermaid_code": mermaid,
+                    "quiz": quiz
+                })
+            except Exception as e:
+                self._send_json(500, {"ok": False, "reply": str(e)})
+
+        elif self.path == "/mentor/quiz":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                item_id = body.get("quiz_id")
+                user_answer = body.get("answer")
+                
+                from vani.services.mentor_service import evaluate_quiz_answer
+                passed, feedback, conf = evaluate_quiz_answer(item_id, user_answer)
+                self._send_json(200, {
+                    "ok": True,
+                    "passed": passed,
+                    "feedback": feedback,
+                    "confidence": conf
+                })
+            except Exception as e:
+                self._send_json(500, {"ok": False, "reply": str(e)})
+
+        elif self.path == "/mentor/roast":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length))
+                level = body.get("level", "Off")
+                
+                from vani.memory.mentor_memory import get_active_session, update_session
+                session = get_active_session()
+                if not session:
+                    self._send_json(400, {"ok": False, "reply": "No active session."})
+                    return
+                roast_int = {"Off": 0, "Light": 1, "Medium": 2, "Savage": 3}.get(level, 0)
+                update_session(session["document_id"], roast_mode=roast_int)
+                self._send_json(200, {"ok": True, "level": level})
+            except Exception as e:
+                self._send_json(500, {"ok": False, "reply": str(e)})
+
         # ── Plugin routes ──────────────────────────────────────────────────────
         elif self.path == "/plugin/enable":
             try:
@@ -730,6 +842,46 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send_json(200, get_enrollment_status())
                 except Exception as exc:
                     self._send_json(200, {"enrolled": False, "error": str(exc)})
+
+            elif self.path == "/mentor/status":
+                try:
+                    from vani.memory.mentor_memory import get_active_session
+                    session = get_active_session()
+                    if not session:
+                        self._send_json(200, {"active": False})
+                        return
+                    
+                    from vani.services.mentor_service import get_concept_details
+                    curr_concept = "None"
+                    if session.get("current_concept_id"):
+                        concept = get_concept_details(session["current_concept_id"])
+                        if concept:
+                            curr_concept = concept["name"]
+                    
+                    self._send_json(200, {
+                        "active": True,
+                        "filename": session["filename"],
+                        "coverage_score": session["coverage_score"],
+                        "mastery_score": session["mastery_score"],
+                        "current_concept": curr_concept,
+                        "roast_mode": session["roast_mode"],
+                        "mode_type": session["mode_type"]
+                    })
+                except Exception as e:
+                    self._send_json(500, {"active": False, "error": str(e)})
+
+            elif self.path == "/mentor/report":
+                try:
+                    from vani.memory.mentor_memory import get_active_session
+                    session = get_active_session()
+                    if not session:
+                        self._send_json(400, {"reply": "No active session."})
+                        return
+                    from vani.services.mentor_service import compile_final_mastery_report
+                    report = compile_final_mastery_report(session["document_id"])
+                    self._send_json(200, {"ok": True, "report": report})
+                except Exception as e:
+                    self._send_json(500, {"reply": str(e)})
 
             # ── Plugin GET routes ──────────────────────────────────────────────
             elif self.path == "/plugin/list":
@@ -1423,22 +1575,32 @@ async def entrypoint(ctx):
     def _register_session_events(sess):
         @sess.on("agent_started_speaking")
         def _on_speak(*_):
-            _patched_state_update(dict(speaking=True, listening=False, processing=False, status="Speaking..."))
+            _patched_state_update(dict(speaking=True, listening=False, processing=False, status="Speaking...", transcript=""))
             _run_audio(vani_deactivated)
 
         @sess.on("agent_stopped_speaking")
         def _on_stop(*_):
-            _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening..."))
+            _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             _run_audio(vani_activated)
 
         @sess.on("user_started_speaking")
         def _on_user(*_):
-            _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening..."))
+            _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             session_audio_buffer.clear()
 
         @sess.on("user_stopped_speaking")
         def _on_stop2(*_):
-            _patched_state_update(dict(speaking=False, listening=False, processing=True, status="Thinking..."))
+            _patched_state_update(dict(speaking=False, listening=False, processing=True, status="Thinking...", transcript=""))
+
+        @sess.on("conversation_item_added")
+        def _on_item(item, *_):
+            try:
+                role = getattr(item, "role", "")
+                text = getattr(item, "text", "") or getattr(item, "text_content", "") or ""
+                if text and role in ("assistant", "agent"):
+                    _patched_state_update(dict(transcript=text))
+            except Exception:
+                pass
 
         @sess.on("user_input_transcribed")
         def _on_transcript(event, *_):
@@ -1447,6 +1609,8 @@ async def entrypoint(ctx):
                     text = getattr(event, "transcript", None) or getattr(event, "text", None) or ""
                     if not text:
                         return
+                    
+                    _patched_state_update(dict(transcript=text))
 
                     is_final = getattr(event, "is_final", None)
                     if is_final is False:

@@ -116,7 +116,29 @@ def is_vani_running() -> bool:
         proc is not None and proc.poll() is None
         for proc in (agent_proc, app_proc)
     )
-    return local_running or _port_open(5500) or bool(_existing_vani_pids())
+    if local_running:
+        return True
+
+    ui_ok = _port_open(5500)
+    voice_backend = os.getenv("VANI_VOICE_BACKEND", "livekit").strip().lower()
+
+    if voice_backend != "livekit":
+        return ui_ok
+
+    # Check if a worker process is active
+    worker_ok = False
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "vani.app.*--worker"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        worker_ok = bool(result.stdout.strip())
+    except Exception:
+        pass
+
+    return ui_ok and worker_ok
 
 
 def start_processes():
@@ -126,6 +148,43 @@ def start_processes():
         print("✅ Vani is already running. No new launch needed.")
         _bring_window_to_front()
         return
+
+    # Clean up any leftover stray worker/app processes to prevent conflict
+    print("🧹 Cleaning up stray Vani processes...")
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "vani.app"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        own_pid = os.getpid()
+        for raw in result.stdout.split():
+            try:
+                pid = int(raw)
+                if pid != own_pid:
+                    print(f"  Killing stray process {pid}")
+                    os.kill(pid, signal.SIGKILL)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Clean up ports
+    for port in (5500, 8765, 8081):
+        try:
+            res = subprocess.run(
+                ["lsof", f"-ti:{port}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            for raw in res.stdout.split():
+                pid = int(raw.strip())
+                if pid != os.getpid():
+                    os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
 
     # Step 1: Start agent Worker (non-blocking)
     print("🚀 Starting Vani agent Worker…")

@@ -136,6 +136,37 @@ def get_dynamic_context() -> str:
     )
 
 
+def get_mentor_prompt_block() -> str:
+    """Returns dynamic instructions for the active mentor session."""
+    try:
+        from vani.memory.mentor_memory import get_active_session
+        from vani.services.mentor_service import get_concept_details, get_roast_prompt
+        session = get_active_session()
+        if not session:
+            return ""
+        
+        curr_concept = "None"
+        if session.get("current_concept_id"):
+            concept = get_concept_details(session["current_concept_id"])
+            if concept:
+                curr_concept = concept["name"]
+                
+        roast_instruction = get_roast_prompt(session.get("roast_mode", 0))
+        
+        return (
+            f"\n\n---\n"
+            f"## MENTOR STUDY SESSION ACTIVE\n"
+            f"**File**: {session['filename']} | **Coverage**: {session['coverage_score']:.1f}% | **Mastery**: {session['mastery_score']:.1f}%\n"
+            f"**Active Concept**: {curr_concept}\n"
+            f"**Roast Intensity context**: {roast_instruction}\n\n"
+            f"Verify Rudra's answers carefully. If correct, let him know and move forward. "
+            f"If incorrect, roast him constructively (if Roast Mode is active) and guide him with a different strategy.\n"
+            f"---\n"
+        )
+    except Exception:
+        return ""
+
+
 def get_final_prompt(preset="full"):
     """Assembles the final prompt."""
     if _PRONUNCIATION_AVAILABLE:
@@ -152,7 +183,8 @@ def get_final_prompt(preset="full"):
         manager.register_mode("teaching", get_teaching_prompt_block())
 
     static_prompt = manager.get_prompt(preset=preset)
-    return static_prompt + get_dynamic_context()
+    mentor_block = get_mentor_prompt_block()
+    return static_prompt + get_dynamic_context() + mentor_block
 
 
 # ── FIX 1 & 2: get_realtime_prompt() defined BEFORE get_security_prompt() ─────
@@ -162,17 +194,19 @@ def get_final_prompt(preset="full"):
 # doesn't hit a NameError.
 
 def get_realtime_prompt() -> str:
-    """Realtime prompt: fresh India date/time + working memory + active uploaded document."""
+    """Realtime prompt: fresh India date/time + working memory + active uploaded document + mentor context."""
     working    = get_working_memory_block()           if _WORKING_MEMORY_AVAILABLE else ""
     doc_block  = get_active_document_prompt_block()   if _ACTIVE_DOC_AVAILABLE     else ""
     # Gemini Files API block — tells Gemini it has native file access
     file_block = get_gemini_file_prompt_block()       if _GEMINI_FILE_AVAILABLE    else ""
+    mentor_block = get_mentor_prompt_block()
     return (
         manager.get_prompt(preset="realtime")
         + working
         + get_dynamic_context()
         + file_block
         + doc_block
+        + mentor_block
     )
 
 

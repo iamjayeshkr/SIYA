@@ -102,7 +102,7 @@ if [ "$TAURI_OK" = "1" ]; then
   ok "Tauri started (PID $TAURI_PID)"
   echo ""
   echo -e "  ${BOLD}Vani is running.${N}"
-  echo -e "  ${G}Cmd+Shift+Space${N} — toggle window"
+  echo -e "  ${G}Cmd+Shift+K${N} — toggle window"
   echo -e "  ${G}Ctrl+C${N}           — quit everything"
 else
   echo ""

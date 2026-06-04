@@ -232,6 +232,60 @@ fn minimize_window(app: AppHandle) {
 }
 
 #[tauri::command]
+fn expand_to_full_ui(app: AppHandle, state: State<'_, AppState>) {
+    if let Some(main_win) = app.get_webview_window("main") {
+        let _ = main_win.show();
+        let _ = main_win.unminimize();
+        let _ = main_win.set_focus();
+        
+        let mut s = state.lock().unwrap();
+        s.persisted.window_visible = true;
+        save_persisted(&s.persisted);
+    }
+    if let Some(overlay_win) = app.get_webview_window("overlay") {
+        let _ = overlay_win.hide();
+    }
+}
+
+#[tauri::command]
+fn collapse_to_overlay(app: AppHandle, state: State<'_, AppState>) {
+    if let Some(overlay_win) = app.get_webview_window("overlay") {
+        if let Some(monitor) = overlay_win.current_monitor().ok().flatten() {
+            let size = monitor.size();
+            let x = (size.width as i32 - 420) / 2;
+            let y = 20;
+            let _ = overlay_win.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+        let _ = overlay_win.show();
+        let _ = overlay_win.set_focus();
+    }
+    if let Some(main_win) = app.get_webview_window("main") {
+        let _ = main_win.hide();
+        let mut s = state.lock().unwrap();
+        s.persisted.window_visible = false;
+        save_persisted(&s.persisted);
+    }
+}
+
+#[tauri::command]
+fn set_overlay_visible(visible: bool, app: AppHandle) {
+    if let Some(overlay_win) = app.get_webview_window("overlay") {
+        if visible {
+            if let Some(monitor) = overlay_win.current_monitor().ok().flatten() {
+                let size = monitor.size();
+                let x = (size.width as i32 - 420) / 2;
+                let y = 20;
+                let _ = overlay_win.set_position(tauri::PhysicalPosition::new(x, y));
+            }
+            let _ = overlay_win.show();
+            let _ = overlay_win.set_focus();
+        } else {
+            let _ = overlay_win.hide();
+        }
+    }
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle, state: State<'_, AppState>) {
     {
         let s = state.lock().unwrap();
@@ -331,12 +385,35 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                let main_visible = app.get_webview_window("main")
+                    .and_then(|w| w.is_visible().ok())
+                    .unwrap_or(false);
+
+                if main_visible {
+                    // Hide main window (and overlay)
+                    if let Some(m_win) = app.get_webview_window("main") {
+                        let _ = m_win.hide();
+                        let state: State<AppState> = app.state();
+                        let mut s = state.lock().unwrap();
+                        s.persisted.window_visible = false;
+                        save_persisted(&s.persisted);
+                    }
+                    if let Some(o_win) = app.get_webview_window("overlay") {
+                        let _ = o_win.hide();
+                    }
+                } else {
+                    // Show main window and hide overlay
+                    if let Some(m_win) = app.get_webview_window("main") {
+                        let _ = m_win.show();
+                        let _ = m_win.unminimize();
+                        let _ = m_win.set_focus();
+                        let state: State<AppState> = app.state();
+                        let mut s = state.lock().unwrap();
+                        s.persisted.window_visible = true;
+                        save_persisted(&s.persisted);
+                    }
+                    if let Some(o_win) = app.get_webview_window("overlay") {
+                        let _ = o_win.hide();
                     }
                 }
             }
@@ -345,7 +422,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
                     let _ = window.set_focus();
+                }
+                if let Some(overlay_win) = app.get_webview_window("overlay") {
+                    let _ = overlay_win.hide();
                 }
             }
             "wake" => {
@@ -555,68 +636,101 @@ fn main() {
             // We hide the window so the user never sees a blank webview while
             // Python boots. Once 5500/ui returns HTTP 200 we reload and show.
             // IMPORTANT: no window.location.href — that breaks CSP and mic perms.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
+            let main_win = app.get_webview_window("main");
+            let overlay_win = app.get_webview_window("overlay");
 
+            if let Some(ref w) = main_win {
+                let _ = w.hide();
                 // Restore saved position while still hidden
                 {
                     let state: State<AppState> = app.handle().state();
                     let s = state.lock().unwrap();
                     if s.persisted.window_x >= 0 && s.persisted.window_y >= 0 {
-                        let _ = window.set_position(tauri::PhysicalPosition::new(
+                        let _ = w.set_position(tauri::PhysicalPosition::new(
                             s.persisted.window_x,
                             s.persisted.window_y,
                         ));
                     }
                 }
+            }
+            if let Some(ref w) = overlay_win {
+                let _ = w.hide();
+            }
 
-                let win_handle = window.clone();
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("wait-for-backend runtime");
+
+                rt.block_on(async move {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(2))
                         .build()
-                        .expect("wait-for-backend runtime");
+                        .unwrap();
 
-                    rt.block_on(async move {
-                        let client = reqwest::Client::builder()
-                            .timeout(std::time::Duration::from_secs(2))
-                            .build()
-                            .unwrap();
+                    let mut attempts = 0u32;
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
+                        attempts += 1;
 
-                        let mut attempts = 0u32;
-                        loop {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
-                            attempts += 1;
+                        if let Ok(resp) = client.get("http://127.0.0.1:5500/ui").send().await {
+                            if resp.status().is_success() {
+                                eprintln!("[vani] Backend ready after {} attempts — reloading and showing windows", attempts);
+                                
+                                let window_visible = {
+                                    let state: State<AppState> = app_handle.state();
+                                    let s = state.lock().unwrap();
+                                    s.persisted.window_visible
+                                };
 
-                            if let Ok(resp) = client.get("http://127.0.0.1:5500/ui").send().await {
-                                if resp.status().is_success() {
-                                    eprintln!("[vani] Backend ready after {} attempts — reloading and showing window", attempts);
-                                    // Reload so Tauri fetches the real patched HTML with LiveKit tokens.
-                                    // Reload keeps the same origin (5500/ui) — no CSP/mic-permission breakage.
-                                    let _ = win_handle.eval("window.location.reload();");
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                    let _ = win_handle.show();
-                                    let _ = win_handle.set_focus();
-                                    return;
+                                if let Some(m_win) = app_handle.get_webview_window("main") {
+                                    let _ = m_win.eval("window.location.reload();");
+                                    if window_visible {
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                        let _ = m_win.show();
+                                        let _ = m_win.unminimize();
+                                        let _ = m_win.set_focus();
+                                    }
                                 }
-                            }
-
-                            if attempts >= 150 {
-                                eprintln!("[vani] Backend did not start in 90s — showing window anyway");
-                                let _ = win_handle.show();
+                                if let Some(o_win) = app_handle.get_webview_window("overlay") {
+                                    let _ = o_win.eval("window.location.reload();");
+                                    if !window_visible {
+                                        if let Some(monitor) = o_win.current_monitor().ok().flatten() {
+                                            let size = monitor.size();
+                                            let x = (size.width as i32 - 420) / 2;
+                                            let y = 20;
+                                            let _ = o_win.set_position(tauri::PhysicalPosition::new(x, y));
+                                        }
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                        let _ = o_win.show();
+                                        let _ = o_win.set_focus();
+                                    } else {
+                                        let _ = o_win.hide();
+                                    }
+                                }
                                 return;
                             }
                         }
-                    });
+
+                        if attempts >= 150 {
+                            eprintln!("[vani] Backend did not start in 90s — showing overlay anyway");
+                            if let Some(o_win) = app_handle.get_webview_window("overlay") {
+                                let _ = o_win.show();
+                            }
+                            return;
+                        }
+                    }
                 });
-            }
+            });
 
             // Start wake word listener in its own thread+runtime
             if wake_word_on {
                 start_wake_word_listener(8765, app.handle().clone());
             }
 
-            // Global hotkey: Cmd+Shift+Space
+            // Global hotkey: Cmd+Shift+K
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::{
@@ -624,18 +738,66 @@ fn main() {
                 };
                 let shortcut = Shortcut::new(
                     Some(Modifiers::META | Modifiers::SHIFT),
-                    Code::Space,
+                    Code::KeyK,
                 );
                 app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new()
                         .with_handler(move |app, s, _event| {
                             if s == &shortcut {
-                                if let Some(window) = app.get_webview_window("main") {
-                                    if window.is_visible().unwrap_or(false) {
-                                        let _ = window.hide();
+                                let main_visible = app.get_webview_window("main")
+                                    .and_then(|w| w.is_visible().ok())
+                                    .unwrap_or(false);
+                                
+                                if main_visible {
+                                    // Collapse to overlay
+                                    if let Some(o_win) = app.get_webview_window("overlay") {
+                                        if let Some(monitor) = o_win.current_monitor().ok().flatten() {
+                                            let size = monitor.size();
+                                            let x = (size.width as i32 - 420) / 2;
+                                            let y = 20;
+                                            let _ = o_win.set_position(tauri::PhysicalPosition::new(x, y));
+                                        }
+                                        let _ = o_win.show();
+                                        let _ = o_win.set_focus();
+                                    }
+                                    if let Some(m_win) = app.get_webview_window("main") {
+                                        let _ = m_win.hide();
+                                        let state: State<AppState> = app.state();
+                                        let mut s = state.lock().unwrap();
+                                        s.persisted.window_visible = false;
+                                        save_persisted(&s.persisted);
+                                    }
+                                } else {
+                                    // Check overlay visibility
+                                    let overlay_visible = app.get_webview_window("overlay")
+                                        .and_then(|w| w.is_visible().ok())
+                                        .unwrap_or(false);
+
+                                    if overlay_visible {
+                                        // Expand overlay to main
+                                        if let Some(m_win) = app.get_webview_window("main") {
+                                            let _ = m_win.show();
+                                            let _ = m_win.unminimize();
+                                            let _ = m_win.set_focus();
+                                            let state: State<AppState> = app.state();
+                                            let mut s = state.lock().unwrap();
+                                            s.persisted.window_visible = true;
+                                            save_persisted(&s.persisted);
+                                        }
+                                        if let Some(o_win) = app.get_webview_window("overlay") {
+                                            let _ = o_win.hide();
+                                        }
                                     } else {
-                                        let _ = window.show();
-                                        let _ = window.set_focus();
+                                        // Both hidden: show main
+                                        if let Some(m_win) = app.get_webview_window("main") {
+                                            let _ = m_win.show();
+                                            let _ = m_win.unminimize();
+                                            let _ = m_win.set_focus();
+                                            let state: State<AppState> = app.state();
+                                            let mut s = state.lock().unwrap();
+                                            s.persisted.window_visible = true;
+                                            save_persisted(&s.persisted);
+                                        }
                                     }
                                 }
                             }
@@ -662,6 +824,9 @@ fn main() {
             update_persisted_state,
             get_wake_status,
             minimize_window,
+            expand_to_full_ui,
+            collapse_to_overlay,
+            set_overlay_visible,
         ])
         .run(tauri::generate_context!())
         .expect("error running Vani");
