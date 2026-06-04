@@ -3205,13 +3205,19 @@ body.overlay-active.speaking #overlay-transcript-txt { display: block; }
     window.tauriListen("vani-state", (event) => {
       const s = event.payload;
       if (s) {
+        // Only call hideOverlay (conn-overlay spinner) and updateState for main window
+        // updateOverlay (which calls set_overlay_visible) is only for the dedicated overlay.html
         if (s.connected && typeof hideOverlay === "function") {
           hideOverlay();
         }
         if (typeof updateState === "function") {
           updateState(s);
         }
-        updateOverlay(s);
+        // Only drive the built-in response-overlay pill if this is NOT the dedicated overlay window
+        // (dedicated overlay.html handles its own state via WS + tauriListen independently)
+        if (!isOverlayWindow) {
+          updateOverlay(s);
+        }
       }
     }).catch(err => {
       console.error("[TauriEvent] Failed to load Tauri event listener:", err);

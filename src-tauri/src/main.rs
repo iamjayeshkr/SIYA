@@ -286,6 +286,19 @@ fn set_overlay_visible(visible: bool, app: AppHandle) {
 }
 
 #[tauri::command]
+fn resize_overlay(width: u32, height: u32, app: AppHandle) {
+    if let Some(overlay_win) = app.get_webview_window("overlay") {
+        let _ = overlay_win.set_size(tauri::PhysicalSize::new(width, height));
+        // Re-centre horizontally after resize
+        if let Some(monitor) = overlay_win.current_monitor().ok().flatten() {
+            let monitor_width = monitor.size().width as i32;
+            let x = (monitor_width - width as i32) / 2;
+            let _ = overlay_win.set_position(tauri::PhysicalPosition::new(x, 20));
+        }
+    }
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle, state: State<'_, AppState>) {
     {
         let s = state.lock().unwrap();
@@ -679,45 +692,37 @@ fn main() {
                             if resp.status().is_success() {
                                 eprintln!("[vani] Backend ready after {} attempts — reloading and showing windows", attempts);
                                 
-                                let window_visible = {
-                                    let state: State<AppState> = app_handle.state();
-                                    let s = state.lock().unwrap();
-                                    s.persisted.window_visible
-                                };
-
+                                // Always show the main window on startup.
+                                // Previously, window_visible=false meant "show overlay only" —
+                                // but the new overlay is state-driven (shows when listening/thinking/speaking).
+                                // A hidden main window + no overlay = blank desktop, so we always show main.
                                 if let Some(m_win) = app_handle.get_webview_window("main") {
                                     let _ = m_win.eval("window.location.reload();");
-                                    if window_visible {
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                        let _ = m_win.show();
-                                        let _ = m_win.unminimize();
-                                        let _ = m_win.set_focus();
-                                    }
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                    let _ = m_win.show();
+                                    let _ = m_win.unminimize();
+                                    let _ = m_win.set_focus();
+                                    // Reset persisted flag so next session also shows main
+                                    let state: State<AppState> = app_handle.state();
+                                    let mut s = state.lock().unwrap();
+                                    s.persisted.window_visible = true;
+                                    save_persisted(&s.persisted);
                                 }
+                                // Overlay is ALWAYS hidden at startup.
+                                // It will show itself automatically when Vani state becomes
+                                // listening / thinking / speaking via the WS push from Python.
                                 if let Some(o_win) = app_handle.get_webview_window("overlay") {
                                     let _ = o_win.eval("window.location.reload();");
-                                    if !window_visible {
-                                        if let Some(monitor) = o_win.current_monitor().ok().flatten() {
-                                            let size = monitor.size();
-                                            let x = (size.width as i32 - 420) / 2;
-                                            let y = 20;
-                                            let _ = o_win.set_position(tauri::PhysicalPosition::new(x, y));
-                                        }
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                        let _ = o_win.show();
-                                        let _ = o_win.set_focus();
-                                    } else {
-                                        let _ = o_win.hide();
-                                    }
+                                    let _ = o_win.hide();
                                 }
                                 return;
                             }
                         }
 
                         if attempts >= 150 {
-                            eprintln!("[vani] Backend did not start in 90s — showing overlay anyway");
-                            if let Some(o_win) = app_handle.get_webview_window("overlay") {
-                                let _ = o_win.show();
+                            eprintln!("[vani] Backend did not start in 90s — showing main window");
+                            if let Some(m_win) = app_handle.get_webview_window("main") {
+                                let _ = m_win.show();
                             }
                             return;
                         }
@@ -731,6 +736,10 @@ fn main() {
             }
 
             // Global hotkey: Cmd+Shift+K
+            // Behaviour:
+            //   - Always opens the full assistant (main window)
+            //   - Hides the overlay when main is shown
+            //   - If main is already visible and focused → hide to tray (clean desktop)
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::{
@@ -747,19 +756,9 @@ fn main() {
                                 let main_visible = app.get_webview_window("main")
                                     .and_then(|w| w.is_visible().ok())
                                     .unwrap_or(false);
-                                
+
                                 if main_visible {
-                                    // Collapse to overlay
-                                    if let Some(o_win) = app.get_webview_window("overlay") {
-                                        if let Some(monitor) = o_win.current_monitor().ok().flatten() {
-                                            let size = monitor.size();
-                                            let x = (size.width as i32 - 420) / 2;
-                                            let y = 20;
-                                            let _ = o_win.set_position(tauri::PhysicalPosition::new(x, y));
-                                        }
-                                        let _ = o_win.show();
-                                        let _ = o_win.set_focus();
-                                    }
+                                    // Main is open → hide everything (clean desktop)
                                     if let Some(m_win) = app.get_webview_window("main") {
                                         let _ = m_win.hide();
                                         let state: State<AppState> = app.state();
@@ -767,37 +766,22 @@ fn main() {
                                         s.persisted.window_visible = false;
                                         save_persisted(&s.persisted);
                                     }
+                                    if let Some(o_win) = app.get_webview_window("overlay") {
+                                        let _ = o_win.hide();
+                                    }
                                 } else {
-                                    // Check overlay visibility
-                                    let overlay_visible = app.get_webview_window("overlay")
-                                        .and_then(|w| w.is_visible().ok())
-                                        .unwrap_or(false);
-
-                                    if overlay_visible {
-                                        // Expand overlay to main
-                                        if let Some(m_win) = app.get_webview_window("main") {
-                                            let _ = m_win.show();
-                                            let _ = m_win.unminimize();
-                                            let _ = m_win.set_focus();
-                                            let state: State<AppState> = app.state();
-                                            let mut s = state.lock().unwrap();
-                                            s.persisted.window_visible = true;
-                                            save_persisted(&s.persisted);
-                                        }
-                                        if let Some(o_win) = app.get_webview_window("overlay") {
-                                            let _ = o_win.hide();
-                                        }
-                                    } else {
-                                        // Both hidden: show main
-                                        if let Some(m_win) = app.get_webview_window("main") {
-                                            let _ = m_win.show();
-                                            let _ = m_win.unminimize();
-                                            let _ = m_win.set_focus();
-                                            let state: State<AppState> = app.state();
-                                            let mut s = state.lock().unwrap();
-                                            s.persisted.window_visible = true;
-                                            save_persisted(&s.persisted);
-                                        }
+                                    // Main is hidden → open Full Assistant Mode
+                                    if let Some(o_win) = app.get_webview_window("overlay") {
+                                        let _ = o_win.hide();
+                                    }
+                                    if let Some(m_win) = app.get_webview_window("main") {
+                                        let _ = m_win.show();
+                                        let _ = m_win.unminimize();
+                                        let _ = m_win.set_focus();
+                                        let state: State<AppState> = app.state();
+                                        let mut s = state.lock().unwrap();
+                                        s.persisted.window_visible = true;
+                                        save_persisted(&s.persisted);
                                     }
                                 }
                             }
@@ -827,6 +811,7 @@ fn main() {
             expand_to_full_ui,
             collapse_to_overlay,
             set_overlay_visible,
+            resize_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error running Vani");

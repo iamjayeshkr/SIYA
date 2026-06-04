@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vani Overlay</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* ── Island container ─────────────────────────────────────── */
+  #island {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%) translateY(-120px);  /* starts off-screen */
+    width: 200px;
+    height: 52px;
+    background: rgba(8, 6, 18, 0.92);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(196, 126, 255, 0.18);
+    border-radius: 26px;
+    box-shadow:
+      0 0 0 0.5px rgba(255,255,255,0.06) inset,
+      0 8px 40px rgba(0,0,0,0.55),
+      0 0 24px rgba(139,92,246,0.15);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px;
+    cursor: pointer;
+    overflow: hidden;
+
+    /* Transition all morphable props */
+    transition:
+      transform 0.42s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+      width 0.38s cubic-bezier(0.25, 0.8, 0.25, 1),
+      height 0.3s cubic-bezier(0.25, 0.8, 0.25, 1),
+      border-color 0.3s ease,
+      box-shadow 0.3s ease;
+  }
+
+  /* ── Visible state — slide down ───────────────────────────── */
+  #island.visible {
+    transform: translateX(-50%) translateY(12px);
+  }
+
+  /* ── Fade-out before hide ─────────────────────────────────── */
+  #island.fading {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-40px);
+    transition:
+      opacity 0.4s ease,
+      transform 0.4s ease;
+  }
+
+  /* ── State color accents ──────────────────────────────────── */
+  #island.listening {
+    width: 200px;
+    border-color: rgba(34, 197, 94, 0.45);
+    box-shadow:
+      0 0 0 0.5px rgba(255,255,255,0.06) inset,
+      0 8px 40px rgba(0,0,0,0.55),
+      0 0 28px rgba(34,197,94,0.20);
+  }
+  #island.thinking {
+    width: 200px;
+    border-color: rgba(168, 85, 247, 0.45);
+    box-shadow:
+      0 0 0 0.5px rgba(255,255,255,0.06) inset,
+      0 8px 40px rgba(0,0,0,0.55),
+      0 0 28px rgba(168,85,247,0.22);
+  }
+  #island.speaking {
+    width: 420px;
+    border-color: rgba(244, 114, 182, 0.45);
+    box-shadow:
+      0 0 0 0.5px rgba(255,255,255,0.06) inset,
+      0 8px 40px rgba(0,0,0,0.55),
+      0 0 32px rgba(244,114,182,0.22);
+  }
+
+  /* ── Icon area ────────────────────────────────────────────── */
+  #icon-area {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  /* Mic icon (listening) */
+  #mic-icon {
+    display: none;
+    font-size: 15px;
+    animation: mic-pulse 1.4s ease-in-out infinite alternate;
+  }
+  #island.listening #mic-icon { display: flex; }
+
+  @keyframes mic-pulse {
+    from { filter: drop-shadow(0 0 2px rgba(34,197,94,0.4)); transform: scale(0.92); }
+    to   { filter: drop-shadow(0 0 9px rgba(34,197,94,0.9)); transform: scale(1.08); }
+  }
+
+  /* Thinking orb */
+  #think-orb {
+    display: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #a855f7;
+    position: relative;
+  }
+  #think-orb::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border: 2px solid rgba(168,85,247,0.55);
+    border-radius: 50%;
+    animation: orb-ring 1.3s ease-out infinite;
+  }
+  #island.thinking #think-orb { display: block; }
+
+  @keyframes orb-ring {
+    0%   { transform: scale(0.5); opacity: 1; }
+    100% { transform: scale(2.0); opacity: 0; }
+  }
+
+  /* Wave bars (speaking) */
+  #wave-bars {
+    display: none;
+    align-items: center;
+    gap: 2.5px;
+    height: 18px;
+  }
+  #island.speaking #wave-bars { display: flex; }
+
+  .wave-bar {
+    width: 2.5px;
+    background: #f472b6;
+    border-radius: 2px;
+    animation: wave 0.5s ease-in-out infinite alternate;
+    animation-delay: var(--d);
+    height: 40%;
+  }
+  @keyframes wave {
+    to { height: 100%; }
+  }
+
+  /* ── Text area ────────────────────────────────────────────── */
+  #text-area {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  #status-label {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    line-height: 1;
+    color: #94a3b8;
+    white-space: nowrap;
+    transition: color 0.3s;
+  }
+  #island.listening #status-label { color: #4ade80; }
+  #island.thinking  #status-label { color: #c084fc; }
+  #island.speaking  #status-label { color: #f9a8d4; font-size: 9.5px; }
+
+  #transcript-line {
+    font-size: 12px;
+    font-weight: 400;
+    color: #cbd5e1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    max-width: 320px;
+    display: none;
+    transition: opacity 0.25s;
+  }
+  #island.speaking #transcript-line { display: block; }
+
+  /* ── Close button ─────────────────────────────────────────── */
+  #close-btn {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: rgba(255,255,255,0.28);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+    margin-left: 2px;
+  }
+  #close-btn:hover {
+    background: rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.85);
+  }
+
+  /* ── Hover glow ───────────────────────────────────────────── */
+  #island:hover {
+    border-color: rgba(196,126,255,0.45);
+  }
+</style>
+</head>
+<body>
+
+<div id="island">
+  <div id="icon-area">
+    <div id="mic-icon">🎤</div>
+    <div id="think-orb"></div>
+    <div id="wave-bars">
+      <div class="wave-bar" style="--d:0.00s"></div>
+      <div class="wave-bar" style="--d:0.10s"></div>
+      <div class="wave-bar" style="--d:0.20s"></div>
+      <div class="wave-bar" style="--d:0.15s"></div>
+      <div class="wave-bar" style="--d:0.05s"></div>
+    </div>
+  </div>
+
+  <div id="text-area">
+    <div id="status-label">Listening</div>
+    <div id="transcript-line"></div>
+  </div>
+
+  <button id="close-btn" title="Dismiss">✕</button>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── DOM refs ───────────────────────────────────────────────
+  const island       = document.getElementById("island");
+  const statusLabel  = document.getElementById("status-label");
+  const transcriptEl = document.getElementById("transcript-line");
+  const closeBtn     = document.getElementById("close-btn");
+
+  // ── State ──────────────────────────────────────────────────
+  let _visible           = false;
+  let _currentVaniState  = null;
+  let _idleTimer         = null;
+  let _isHovered         = false;
+  let _lastTranscriptLen = 0;
+  let _fadingOut         = false;
+
+  // ── Helpers ────────────────────────────────────────────────
+
+  function autoHideDelay(len) {
+    if (len < 60)  return 8_000;
+    if (len < 200) return 15_000;
+    return 25_000;
+  }
+
+  function clearIdleTimer() {
+    if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  }
+
+  function scheduleHide(len) {
+    clearIdleTimer();
+    if (_isHovered) return;
+    const delay = autoHideDelay(len);
+    _idleTimer = setTimeout(hideIsland, delay);
+  }
+
+  // ── Tauri bridge ───────────────────────────────────────────
+
+  async function tauriInvoke(cmd, args = {}) {
+    if (window.__TAURI__?.core) {
+      return window.__TAURI__.core.invoke(cmd, args);
+    }
+    if (window.__TAURI_INTERNALS__) {
+      // Tauri v2 internal bridge
+      return new Promise((res, rej) => {
+        window.__TAURI_INTERNALS__.transformCallback = window.__TAURI_INTERNALS__.transformCallback || (() => {});
+        window.__TAURI__.invoke?.(cmd, args).then(res).catch(rej);
+      });
+    }
+  }
+
+  async function resizeOverlay(w, h) {
+    try { await tauriInvoke("resize_overlay", { width: w, height: h }); }
+    catch (_) {}
+  }
+
+  async function setOverlayVisible(v) {
+    try { await tauriInvoke("set_overlay_visible", { visible: v }); }
+    catch (_) {}
+  }
+
+  async function expandToFullUI() {
+    try { await tauriInvoke("expand_to_full_ui"); }
+    catch (_) {}
+  }
+
+  // ── Show / hide island ─────────────────────────────────────
+
+  function showIsland() {
+    if (_fadingOut) {
+      island.classList.remove("fading");
+      _fadingOut = false;
+    }
+    _visible = true;
+    // small rAF so CSS transition triggers after display
+    requestAnimationFrame(() => island.classList.add("visible"));
+  }
+
+  function hideIsland() {
+    clearIdleTimer();
+    _visible = false;
+    _fadingOut = true;
+    island.classList.add("fading");
+
+    // After animation completes, tell Rust to hide the window
+    setTimeout(async () => {
+      if (_fadingOut) {
+        island.classList.remove("visible", "fading");
+        _fadingOut = false;
+        await setOverlayVisible(false);
+      }
+    }, 420);
+  }
+
+  // ── Apply Vani state ───────────────────────────────────────
+
+  function applyState(s) {
+    _currentVaniState = s;
+
+    // Determine mode
+    const isThinking = !!(
+      s.processing ||
+      s.status === "Thinking..." ||
+      ["Searching", "Reading PDF", "Opening Browser",
+       "Analyzing Repository", "Executing Tool"].includes(s.status)
+    );
+
+    clearIdleTimer();
+
+    island.classList.remove("listening", "thinking", "speaking");
+
+    if (s.speaking) {
+      // ── Speaking ──────────────────────────────────────────
+      island.classList.add("speaking");
+      statusLabel.textContent = "Vani";
+      const transcript = s.transcript || "";
+      transcriptEl.textContent = transcript || "Speaking…";
+      if (transcript) _lastTranscriptLen = transcript.length;
+
+      resizeOverlay(420, 68);
+      showIsland();
+
+    } else if (isThinking) {
+      // ── Thinking / Tool ───────────────────────────────────
+      island.classList.add("thinking");
+      statusLabel.textContent = s.status || "Thinking…";
+      transcriptEl.textContent = "";
+
+      resizeOverlay(210, 52);
+      showIsland();
+
+    } else if (s.listening) {
+      // ── Listening ─────────────────────────────────────────
+      island.classList.add("listening");
+      statusLabel.textContent = "Listening…";
+      transcriptEl.textContent = "";
+
+      resizeOverlay(210, 52);
+      showIsland();
+
+    } else {
+      // ── Idle — schedule auto-hide ──────────────────────────
+      scheduleHide(_lastTranscriptLen);
+    }
+  }
+
+  // ── Click handlers ─────────────────────────────────────────
+
+  island.addEventListener("click", (e) => {
+    if (e.target === closeBtn) return; // handled separately
+    expandToFullUI();
+  });
+
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideIsland();
+  });
+
+  // ── Hover pause ────────────────────────────────────────────
+
+  island.addEventListener("mouseenter", () => {
+    _isHovered = true;
+    clearIdleTimer();
+  });
+
+  island.addEventListener("mouseleave", () => {
+    _isHovered = false;
+    const isBusy = island.classList.contains("speaking")
+                || island.classList.contains("thinking")
+                || island.classList.contains("listening");
+    if (!isBusy) scheduleHide(_lastTranscriptLen);
+  });
+
+  // ── Tauri vani-state listener ──────────────────────────────
+
+  async function bindTauriEvents() {
+    if (!window.__TAURI__?.event) return;
+    try {
+      await window.__TAURI__.event.listen("vani-state", (ev) => {
+        if (ev?.payload) applyState(ev.payload);
+      });
+    } catch (err) {
+      console.warn("[overlay] Tauri event bind failed:", err);
+    }
+  }
+
+  // ── WebSocket fallback (same WS the main UI uses) ──────────
+
+  let _ws = null;
+  let _wsRetryDelay = 1000;
+
+  function connectWs() {
+    if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
+    try {
+      _ws = new WebSocket("ws://127.0.0.1:5500/ws");
+
+      _ws.onopen = () => {
+        _wsRetryDelay = 1000;
+        console.log("[overlay] WS connected");
+      };
+
+      _ws.onmessage = (ev) => {
+        try {
+          const s = JSON.parse(ev.data);
+          applyState(s);
+        } catch (_) {}
+      };
+
+      _ws.onclose = () => {
+        _ws = null;
+        _wsRetryDelay = Math.min(8000, _wsRetryDelay * 1.5);
+        setTimeout(connectWs, _wsRetryDelay);
+      };
+
+      _ws.onerror = () => {
+        _ws?.close();
+      };
+    } catch (_) {
+      setTimeout(connectWs, _wsRetryDelay);
+    }
+  }
+
+  // ── Keyboard: Escape dismisses, Enter expands ──────────────
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape")  hideIsland();
+    if (e.key === "Enter")   expandToFullUI();
+  });
+
+  // ── Boot ───────────────────────────────────────────────────
+
+  bindTauriEvents();
+  connectWs();
+
+})();
+</script>
+</body>
+</html>

@@ -951,6 +951,18 @@ class _Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
 
+            elif self.path == "/overlay":
+                # ── Dedicated Dynamic Island overlay — standalone, no avatar code ──
+                overlay_html = PACKAGE_ROOT / "ui" / "overlay.html"
+                if not overlay_html.exists():
+                    self.send_response(404); self.end_headers(); return
+                body = overlay_html.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             else:
                 ALLOWED_ASSETS = {
                     "/vani_idle.png":              (ASSETS_ROOT / "images" / "vani_idle.png",                  "image/png"),
