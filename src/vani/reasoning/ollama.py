@@ -11,7 +11,7 @@ import threading
 from collections import OrderedDict
 
 from vani.reasoning.shared import logger, OLLAMA_URL, OLLAMA_MODEL
-from vani.reasoning.registry import _TOOLS, _TOOL_DESCRIPTIONS
+from vani.reasoning.registry import get_tool, get_all_tool_descriptions
 from vani.reasoning.router import _router_classify, _router_classify_many, _dispatch_intent, _is_learn_intent
 
 _OLLAMA_RESPONSE_CACHE: OrderedDict = OrderedDict()
@@ -73,7 +73,7 @@ def _build_qwen_prompt(query: str) -> str:
 Given the user's request, decide which tool to call and with what arguments.
 
 Available tools:
-{_TOOL_DESCRIPTIONS}
+{get_all_tool_descriptions()}
 
 IMPORTANT RULES:
 - Respond ONLY with valid JSON, no explanation, no markdown fences
@@ -122,9 +122,10 @@ async def _qwen_decide_and_run(query: str) -> str:
     pass
 
     try:
-        from vani.memory.working_memory import answer_memory_query, record_user_signal
+        from vani.memory.working_memory import answer_memory_query, record_user_signal, extract_and_store_facts
         record_user_signal(query)
-        memory_reply = answer_memory_query(query)
+        asyncio.create_task(extract_and_store_facts(query))
+        memory_reply = await answer_memory_query(query)
         if memory_reply and any(p in query.lower() for p in [
             "kya yaad", "what do you remember", "reminder", "pending", "last topic", "working on"
         ]):
@@ -185,9 +186,37 @@ async def _qwen_decide_and_run(query: str) -> str:
         clean = raw.strip()
         for fence in ["```json", "```"]:
             clean = clean.replace(fence, "")
-        decision = json.loads(clean.strip())
-    except json.JSONDecodeError:
-        logger.warning(f"[Qwen] Could not parse JSON: {raw}")
+        try:
+            decision = json.loads(clean.strip())
+        except json.JSONDecodeError:
+            # Fallback AST parsing if Ollama outputs Python tool call syntax (e.g. tool_name(key=val))
+            import ast
+            parsed = None
+            try:
+                node = ast.parse(clean.strip(), mode='eval').body
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    tool_name = node.func.id
+                    args = {}
+                    for kw in node.keywords:
+                        if isinstance(kw.value, ast.Constant):
+                            args[kw.arg] = kw.value.value
+                        elif hasattr(kw.value, 'value'):
+                            args[kw.arg] = kw.value.value
+                        elif isinstance(kw.value, ast.Str):
+                            args[kw.arg] = kw.value.s
+                        elif isinstance(kw.value, ast.Num):
+                            args[kw.arg] = kw.value.n
+                    parsed = {"tool": tool_name, "args": args}
+            except Exception:
+                pass
+            
+            if parsed:
+                decision = parsed
+                logger.info(f"[Qwen] Parsed Python tool call format via AST: {decision}")
+            else:
+                raise
+    except Exception as exc:
+        logger.warning(f"[Qwen] Could not parse decision: {raw} -> {exc}")
         # Ollama returned garbage — don't leave Vani silent
         return "Ek second, kuch issue hua. Dobara bol sakte ho?"
 
@@ -200,7 +229,7 @@ async def _qwen_decide_and_run(query: str) -> str:
         logger.info(f"[Qwen] No tool needed for: {query!r} — text_chat will call Gemini directly")
         return ""
 
-    tool_fn = _TOOLS.get(tool_name)
+    tool_fn = get_tool(tool_name)
     if not tool_fn:
         logger.warning(f"[Qwen] Unknown tool requested: {tool_name}")
         return f"Tool '{tool_name}' nahi mila."

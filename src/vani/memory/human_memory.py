@@ -592,3 +592,9 @@ def clear_active_document() -> None:
             conn.commit()
     except Exception:
         pass
+
+    try:
+        from vani.services.gemini_file_store import clear_active_gemini_files
+        clear_active_gemini_files()
+    except Exception:
+        pass

@@ -96,8 +96,8 @@ def _trim_failure_log() -> None:
 def _purge_expired_documents() -> None:
     """Purge temporary documents past their TTL from human_memory SQLite."""
     try:
-        from vani.memory.human_memory import purge_expired_documents
-        purge_expired_documents()
+        from vani.memory.human_memory import cleanup_expired_temp_documents
+        cleanup_expired_temp_documents()
         logger.debug("[MAINTENANCE] Expired document purge complete.")
     except Exception as e:
         logger.debug(f"[MAINTENANCE] Document purge skipped: {e}")

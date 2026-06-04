@@ -192,6 +192,15 @@ def list_tools() -> list[str]:
         return list(_TOOLS.keys()) + list(_dynamic_tools.keys())
 
 
+def get_all_tool_descriptions() -> str:
+    """Return a single string containing all static + dynamic tool descriptions."""
+    with _registry_lock:
+        dynamic_desc = "\n".join(_dynamic_descriptions)
+    if dynamic_desc:
+        return _TOOL_DESCRIPTIONS.strip() + "\n" + dynamic_desc
+    return _TOOL_DESCRIPTIONS.strip()
+
+
 def get_tools_for_agent(agent_name: str) -> dict:
     """
     Returns the tool callables owned by a given agent.

@@ -71,9 +71,10 @@ async def execute_plan(plan: TaskPlan) -> str | None:
         return None
 
     results: list[str] = []
+    state_context: dict[str, Any] = {}
 
     for task in plan.subtasks:
-        result = await _execute_one(task, plan.raw_query)
+        result = await _execute_one(task, plan.raw_query, state_context)
 
         if result is None:
             # Executor couldn't handle this subtask — signal LLM fallback
@@ -85,6 +86,7 @@ async def execute_plan(plan: TaskPlan) -> str | None:
 
         if result:
             results.append(result)
+            state_context[task.task_id] = result
 
     # Single task: return its result directly
     if len(plan.subtasks) == 1:
@@ -97,7 +99,7 @@ async def execute_plan(plan: TaskPlan) -> str | None:
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-async def _execute_one(task: SubTask, raw_query: str) -> str | None:
+async def _execute_one(task: SubTask, raw_query: str, context: dict[str, Any] | None = None) -> str | None:
     """
     Execute a single SubTask via _dispatch_intent.
 
@@ -112,8 +114,15 @@ async def _execute_one(task: SubTask, raw_query: str) -> str | None:
     t_start = time.monotonic()
 
     try:
-        from vani.reasoning.router import _dispatch_intent
-        result = await _dispatch_intent(task.intent, task.data, task.query or raw_query)
+        from vani.agents import get_agent
+        agent = get_agent(task.agent) if task.agent else None
+        
+        if agent:
+            logger.info(f"[EXECUTOR] Routing subtask {task.task_id} through stateful agent '{task.agent}'")
+            result = await agent.run(task.query or raw_query, context)
+        else:
+            from vani.reasoning.router import _dispatch_intent
+            result = await _dispatch_intent(task.intent, task.data, task.query or raw_query)
 
         elapsed_ms = (time.monotonic() - t_start) * 1000
         task.duration_ms = elapsed_ms

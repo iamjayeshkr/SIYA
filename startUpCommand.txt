@@ -1,1 +1,1 @@
-PYTHONPATH=src python3 -m vani.app 2>&1 | grep -E "ERROR|WARNING|started OK|speaking|ready|say_to_user"
+./start.sh

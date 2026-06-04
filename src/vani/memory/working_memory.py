@@ -245,7 +245,7 @@ def record_tool_signal(tool_name: str, args) -> None:
             record_user_signal(raw)
 
 
-def answer_memory_query(query: str) -> str:
+async def answer_memory_query(query: str) -> str:
     low = (query or "").lower()
     if not any(p in low for p in ["reminder", "yaad", "remember", "memory", "topic", "working on", "kaam"]):
         return ""
@@ -265,7 +265,66 @@ def answer_memory_query(query: str) -> str:
     if permanent:
         lines.append("Permanent memory:")
         lines.extend(f"- {m['content']}" for m in permanent[:6] if m.get("content"))
+
+    # SQLite vector store local semantic memory search
+    try:
+        from vani.memory.vector_store import SQLiteVectorStore
+        store = SQLiteVectorStore()
+        semantic_matches = await store.search_memory(query, limit=5)
+        if semantic_matches:
+            lines.append("Semantic memories (local search):")
+            lines.extend(f"- {m['content']} (similarity: {m['score']:.2f})" for m in semantic_matches)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to query semantic vector store: {e}")
+
     return "\n".join(lines).strip()
+
+
+async def extract_and_store_facts(query: str) -> None:
+    """Mem0-style local background fact extraction using Ollama."""
+    if not query.strip():
+        return
+
+    from vani.memory.vector_store import SQLiteVectorStore
+    store = SQLiteVectorStore()
+
+    prompt = f"""You are a memory processor. Given the user's message, identify if it contains any facts about the user, their preferences, reminders, or permanent information.
+Extract these facts as clear sentences.
+Message: "{query}"
+
+Respond ONLY with a JSON list of strings, e.g. ["User's favorite stock is AAPL", "User has a meeting tomorrow at 3 PM"].
+If no facts are present, respond with []. No explanation, no markdown fences."""
+
+    try:
+        from vani.reasoning.shared import OLLAMA_URL, OLLAMA_MODEL
+        import requests
+        
+        def _call_ollama():
+            try:
+                r = requests.post(OLLAMA_URL, json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}, timeout=10)
+                if r.status_code == 200:
+                    resp_text = r.json().get("response", "").strip()
+                    for fence in ["```json", "```"]:
+                        resp_text = resp_text.replace(fence, "")
+                    resp_text = resp_text.strip()
+                    match = re.search(r"(\[.*\])", resp_text, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(1))
+            except Exception:
+                pass
+            return []
+
+        loop = asyncio.get_running_loop()
+        facts = await loop.run_in_executor(None, _call_ollama)
+
+        for fact in facts:
+            if isinstance(fact, str) and fact.strip():
+                await store.add_memory(fact.strip(), {"source": "extracted_fact"})
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Fact extraction failed: {e}")
+
 
 
 def get_working_memory_block() -> str:
@@ -303,3 +362,10 @@ def get_startup_memory_brief() -> str:
     if topic:
         parts.append(f"Last topic: {topic[0]['text']}")
     return ". ".join(parts)[:260]
+
+
+def clear_working_memory() -> None:
+    global _state
+    _state = _default_state()
+    _save()
+

@@ -163,6 +163,7 @@ class DiagramPlugin(VaniPlugin):
     A-->>U: Answer"""
 
     def _render_html(self, title: str, diagram_type: str, mermaid_code: str) -> str:
+        escaped_mermaid = mermaid_code.replace('\\', '\\\\').replace('`', '\\`')
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -267,7 +268,7 @@ class DiagramPlugin(VaniPlugin):
     flowchart: {{ curve: 'basis' }},
   }});
   function copyCode() {{
-    navigator.clipboard.writeText(`{mermaid_code.replace('`', '\\`')}`);
+    navigator.clipboard.writeText(`{escaped_mermaid}`);
     alert('Mermaid code copied!');
   }}
 </script>

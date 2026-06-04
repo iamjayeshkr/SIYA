@@ -47,6 +47,8 @@ FAILURES_LOG       = PROJECT_ROOT / "conversations" / "agent_failures.jsonl"
 TASK_HISTORY_LOG   = PROJECT_ROOT / "conversations" / "task_history.jsonl"
 STRATEGIES_FILE    = PROJECT_ROOT / "conversations" / "learned_strategies.json"
 REPORT_FILE        = PROJECT_ROOT / "conversations" / "improvement_report.json"
+SUGGESTIONS_FILE   = PROJECT_ROOT / "conversations" / "improvement_suggestions.jsonl"
+AUDIT_LOG_FILE     = PROJECT_ROOT / "conversations" / "self_improvement_audit.jsonl"
 
 # How many recent failures to analyze per cycle
 _MAX_FAILURE_ENTRIES = 200
@@ -473,3 +475,158 @@ def print_report() -> None:
             print(f"    • {item['intent']}: {item['rate']*100:.1f}% success over {item['total']} calls")
 
     print(f"{'='*60}\n")
+
+
+# ── Phase 6.6: Human-Approved Controlled Self-Improvement ─────────────────────
+
+import uuid
+
+def reflect_on_task(agent_name: str, request: str, messages: list[dict], success: bool) -> None:
+    """
+    Called after task execution finishes to analyze errors or workflow bottlenecks.
+    Creates suggestions for human approval.
+    """
+    if not request or not agent_name:
+        return
+
+    issue = ""
+    recommendation = ""
+    parameter_key = ""
+    parameter_value = None
+
+    if not success:
+        # Find the last system/error message
+        last_system_msg = next((m["content"] for m in reversed(messages) if m["role"] == "system"), "")
+        last_system_msg_lower = last_system_msg.lower()
+        
+        if "timeout" in last_system_msg_lower:
+            issue = f"Agent '{agent_name}' encountered a timeout error."
+            recommendation = f"Increase the execution step limit or tool timeout parameters for agent '{agent_name}'."
+            parameter_key = f"agent_timeout_override::{agent_name}"
+            parameter_value = 15.0
+        elif "permission" in last_system_msg_lower:
+            issue = f"Agent '{agent_name}' was blocked by a permission/security gate."
+            recommendation = f"Pre-approve frequent safe operations for agent '{agent_name}' under secure configurations."
+            parameter_key = f"pre_approve_safeties::{agent_name}"
+            parameter_value = True
+        else:
+            issue = f"Agent '{agent_name}' failed to complete task: '{request[:60]}'."
+            recommendation = f"Append specialized helper strategy hints for agent '{agent_name}' in learned_strategies.json."
+            parameter_key = f"custom_strategy_hint::{agent_name}"
+            parameter_value = f"Analyze the task flow for failure context: {last_system_msg[:50]}"
+    else:
+        # If successful, check if the steps were too high (e.g. > 7 steps)
+        steps_count = sum(1 for m in messages if m["role"] == "assistant")
+        if steps_count > 7:
+            issue = f"Agent '{agent_name}' succeeded but took {steps_count} steps (high step count)."
+            recommendation = f"Configure tighter planning heuristics for agent '{agent_name}' to reduce execution latency."
+            parameter_key = f"agent_step_cap::{agent_name}"
+            parameter_value = 6
+
+    if issue and recommendation:
+        suggestion = {
+            "id": str(uuid.uuid4()),
+            "timestamp": time.time(),
+            "agent": agent_name,
+            "issue": issue,
+            "recommendation": recommendation,
+            "parameter_key": parameter_key,
+            "parameter_value": parameter_value,
+            "status": "pending"
+        }
+        
+        try:
+            SUGGESTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(SUGGESTIONS_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(suggestion, ensure_ascii=False) + "\n")
+            logger.info(f"[SELF_IMPROVE] Suggested self-improvement item created: {suggestion['id']}")
+        except Exception as e:
+            logger.error(f"[SELF_IMPROVE] Failed to write suggestion: {e}")
+
+
+def get_pending_suggestions() -> list[dict]:
+    """Return a list of all pending improvement suggestions."""
+    if not SUGGESTIONS_FILE.exists():
+        return []
+    suggestions = []
+    try:
+        with open(SUGGESTIONS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entry = json.loads(line)
+                    if entry.get("status") == "pending":
+                        suggestions.append(entry)
+    except Exception as e:
+        logger.error(f"[SELF_IMPROVE] Failed to read suggestions: {e}")
+    return suggestions
+
+
+def approve_suggestion(suggestion_id: str) -> bool:
+    """
+    Approve a suggestion. Marks it as approved, writes to the audit log,
+    and applies the recommendation to learned_strategies.json parameters.
+    """
+    if not SUGGESTIONS_FILE.exists():
+        return False
+        
+    all_suggestions = []
+    target_suggestion = None
+    
+    try:
+        # Read all suggestions
+        with open(SUGGESTIONS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entry = json.loads(line)
+                    if entry.get("id") == suggestion_id and entry.get("status") == "pending":
+                        entry["status"] = "approved"
+                        target_suggestion = entry
+                    all_suggestions.append(entry)
+                    
+        if not target_suggestion:
+            return False
+            
+        # Re-write suggestions file
+        with open(SUGGESTIONS_FILE, "w", encoding="utf-8") as f:
+            for s in all_suggestions:
+                f.write(json.dumps(s, ensure_ascii=False) + "\n")
+                
+        # Write to audit log
+        audit_entry = {
+            "timestamp": time.time(),
+            "suggestion_id": suggestion_id,
+            "agent": target_suggestion.get("agent"),
+            "issue": target_suggestion.get("issue"),
+            "recommendation": target_suggestion.get("recommendation"),
+            "action": "approved"
+        }
+        AUDIT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(audit_entry, ensure_ascii=False) + "\n")
+            
+        # Apply parameters to STRATEGIES_FILE
+        strategies = {}
+        if STRATEGIES_FILE.exists():
+            try:
+                with open(STRATEGIES_FILE, "r", encoding="utf-8") as f:
+                    strategies = json.load(f)
+            except Exception:
+                pass
+                
+        approved_params = strategies.setdefault("approved_parameters", {})
+        param_key = target_suggestion.get("parameter_key")
+        param_val = target_suggestion.get("parameter_value")
+        if param_key:
+            approved_params[param_key] = param_val
+            
+        with open(STRATEGIES_FILE, "w", encoding="utf-8") as f:
+            json.dump(strategies, f, indent=2, ensure_ascii=False)
+            
+        logger.info(f"[SELF_IMPROVE] Suggestion approved and parameters applied: {suggestion_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"[SELF_IMPROVE] Error during suggestion approval: {e}")
+        return False

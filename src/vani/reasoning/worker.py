@@ -129,6 +129,22 @@ class LatestWinsQueue:
         """Register the currently-running tool asyncio.Task so it can be cancelled."""
         self._active_task = task
 
+    def cancel_active_task_threadsafe(self) -> None:
+        """Thread-safe cancel the active task and clear pending items."""
+        if self._active_task is not None and not self._active_task.done():
+            try:
+                loop = self._active_task.get_loop()
+                loop.call_soon_threadsafe(self._active_task.cancel)
+                logger.info("[LWQ] Sent cancel signal thread-safely to active task")
+            except Exception as e:
+                logger.warning(f"[LWQ] Failed to cancel active task thread-safely: {e}")
+                try:
+                    self._active_task.cancel()
+                except Exception:
+                    pass
+        self._pending_item = None
+        self._event.clear()
+
 
 # ── Session references ────────────────────────────────────────────────────────
 _session_ref = None

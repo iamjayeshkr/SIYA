@@ -45,6 +45,31 @@ _EXPECTED_DIM: int = 256
 _file_lock = threading.Lock()
 
 
+def update_env_variable(key: str, value: str) -> None:
+    """Update a key-value pair in both os.environ and the .env file."""
+    import os
+    os.environ[key] = value
+    try:
+        env_path = PROJECT_ROOT / ".env"
+        if env_path.exists():
+            lines = env_path.read_text().splitlines()
+        else:
+            lines = []
+        updated = False
+        for i, line in enumerate(lines):
+            # Matches key= or key =
+            if line.strip().startswith(key + "=") or line.strip().startswith(key + " ="):
+                lines[i] = f'{key}="{value}"'
+                updated = True
+                break
+        if not updated:
+            lines.append(f'{key}="{value}"')
+        env_path.write_text("\n".join(lines) + "\n")
+        log.info("voice_enrollment: updated .env: %s=%s", key, value)
+    except Exception as exc:
+        log.warning("voice_enrollment: failed to update .env: %s", exc)
+
+
 # ── Status helpers ────────────────────────────────────────────────────────────
 
 def is_enrolled() -> bool:
@@ -163,6 +188,9 @@ def delete_voiceprint() -> bool:
                 return False
             VOICEPRINT_PATH.unlink()
         log.info("voice_enrollment: voiceprint deleted")
+        
+        # Automatically disable speaker verification when enrollment is deleted
+        update_env_variable("VANI_SPEAKER_VERIFY", "0")
         return True
     except Exception as exc:
         log.warning("voice_enrollment: delete_voiceprint() failed: %s", exc)
@@ -232,6 +260,9 @@ def enroll_from_audio(wav_chunks: list, sr: int) -> dict:
         # ── 4. Save voiceprint ────────────────────────────────────────────────
         if not save_voiceprint(embedding):
             return {"ok": False, "reason": "save_failed"}
+
+        # Automatically enable speaker verification on successful enrollment
+        update_env_variable("VANI_SPEAKER_VERIFY", "1")
 
         log.info(
             "voice_enrollment: enrollment complete — %.2fs audio, voiceprint saved",

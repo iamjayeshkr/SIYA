@@ -230,6 +230,9 @@ def classify_site_search_intent(query: str) -> tuple[str, str] | None:
         match = re.match(pattern, q, flags=re.IGNORECASE)
         if not match:
             continue
+        query_val = match.group("query")
+        if " & " in query_val or " and " in query_val or " aur " in query_val or " then " in query_val or " phir " in query_val:
+            continue
         site_key = _normalize_site_key(match.group("site"))
         if site_key in {"google", "google.com", "udemy", "udemy.com"} and not q.startswith(("open ", "kholo ", "launch ", "visit ", "go to ")):
             return None

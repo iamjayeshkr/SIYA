@@ -73,7 +73,7 @@ async def save_note(title: str, content: str) -> str:
     """
     desktop = os.path.join(os.path.expanduser("~"), "Desktop")
     os.makedirs(desktop, exist_ok=True)
-    safe = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-")).strip() or "Note"
+    safe = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-", "+", "#")).strip() or "Note"
     filepath = os.path.join(desktop, f"{safe}.md")
 
     loop = asyncio.get_running_loop()

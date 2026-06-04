@@ -19,6 +19,9 @@ import os
 import re
 import json
 import logging
+import sys
+import asyncio
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -32,13 +35,14 @@ class ExcelPlugin(VaniPlugin):
     icon = "📊"
     description = "Creates financial spreadsheets, budget tables, and trackers in Excel."
     category = "finance"
-    enabled = False
+    enabled = True
     triggers = [
         "excel mein banao", "spreadsheet banao", "finance table", "budget table",
         "excel table", "excel file", "xlsx banao", "expense tracker",
         "income statement", "emi calculate", "budget banao", "finance chart",
         "balance sheet", "profit loss", "p&l table", "financial table",
         "salary breakdown", "tax table", "investment tracker",
+        "mis banao", "mis report", "data entry", "data entry sheet",
     ]
 
     async def on_activate(self, query: str, context: PluginContext) -> PluginResult:
@@ -52,124 +56,275 @@ class ExcelPlugin(VaniPlugin):
                 message="openpyxl install nahi hai. Run: pip install openpyxl"
             )
 
-        # Parse what kind of table is needed
-        table_type = self._detect_table_type(query, context)
-        data = self._extract_data_from_context(query, context, table_type)
-
+        # Fast prediction of file name for instant response
+        table_type_predicted = self._detect_table_type(query, context)
+        now = datetime.now().strftime("%d-%b-%Y_%H%M")
+        filename = f"Vani_{table_type_predicted.replace(' ', '_')}_{now}.xlsx"
         desktop = Path.home() / "Desktop"
         desktop.mkdir(exist_ok=True)
-        now = datetime.now().strftime("%d-%b-%Y_%H%M")
-        filename = f"Vani_{table_type.replace(' ', '_')}_{now}.xlsx"
         filepath = desktop / filename
 
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = table_type[:31]
+        # Define background task to run LLM, build sheet, save, and launch
+        async def _generate_excel_bg():
+            loop = asyncio.get_running_loop()
+            llm_data = await loop.run_in_executor(None, self._generate_excel_via_llm, query, context)
+            
+            if llm_data and "headers" in llm_data and "rows" in llm_data:
+                table_type = llm_data.get("table_type", table_type_predicted)
+                data = llm_data
+                logger.info("Successfully generated spreadsheet data using Ollama LLM in background.")
+            else:
+                logger.info("Ollama spreadsheet generation failed in background. Using fallback templates.")
+                table_type = table_type_predicted
+                data = self._extract_data_from_context(query, context, table_type)
 
-        # ── Styles ────────────────────────────────────────────────────────────
-        header_fill   = PatternFill("solid", fgColor="1F3864")
-        subhead_fill  = PatternFill("solid", fgColor="2E75B6")
-        total_fill    = PatternFill("solid", fgColor="E2EFDA")
-        white_font    = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
-        header_font   = Font(bold=True, color="FFFFFF", name="Calibri", size=12)
-        total_font    = Font(bold=True, name="Calibri", size=11)
-        body_font     = Font(name="Calibri", size=10)
-        center_align  = Alignment(horizontal="center", vertical="center")
-        thin_border   = Border(
-            left=Side(style="thin"),  right=Side(style="thin"),
-            top=Side(style="thin"),   bottom=Side(style="thin"),
-        )
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = table_type[:31]
+            
+            headers = data["headers"]
+            last_col_letter = get_column_letter(len(headers))
 
-        # ── Title row ─────────────────────────────────────────────────────────
-        ws.merge_cells("A1:E1")
-        title_cell = ws["A1"]
-        title_cell.value = f"📊 {table_type.title()}"
-        title_cell.font = Font(bold=True, name="Calibri", size=14, color="FFFFFF")
-        title_cell.fill = PatternFill("solid", fgColor="1F3864")
-        title_cell.alignment = center_align
-        ws.row_dimensions[1].height = 30
+            # Styles
+            header_fill   = PatternFill("solid", fgColor="1F3864")
+            subhead_fill  = PatternFill("solid", fgColor="2E75B6")
+            total_fill    = PatternFill("solid", fgColor="E2EFDA")
+            white_font    = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
+            header_font   = Font(bold=True, color="FFFFFF", name="Calibri", size=12)
+            total_font    = Font(bold=True, name="Calibri", size=11)
+            body_font     = Font(name="Calibri", size=10)
+            center_align  = Alignment(horizontal="center", vertical="center")
+            thin_border   = Border(
+                left=Side(style="thin"),  right=Side(style="thin"),
+                top=Side(style="thin"),   bottom=Side(style="thin"),
+            )
 
-        # ── Sub-title ─────────────────────────────────────────────────────────
-        ws.merge_cells("A2:E2")
-        sub_cell = ws["A2"]
-        sub_cell.value = f"Generated by Vani AI  ·  {datetime.now().strftime('%d %B %Y')}"
-        sub_cell.font = Font(italic=True, name="Calibri", size=9, color="FFFFFF")
-        sub_cell.fill = PatternFill("solid", fgColor="2E75B6")
-        sub_cell.alignment = center_align
-        ws.row_dimensions[2].height = 18
+            # Title row
+            ws.merge_cells(f"A1:{last_col_letter}1")
+            title_cell = ws["A1"]
+            title_cell.value = f"📊 {table_type.title()}"
+            title_cell.font = Font(bold=True, name="Calibri", size=14, color="FFFFFF")
+            title_cell.fill = PatternFill("solid", fgColor="1F3864")
+            title_cell.alignment = center_align
+            ws.row_dimensions[1].height = 30
 
-        # ── Headers ───────────────────────────────────────────────────────────
-        headers = data["headers"]
-        for col_idx, header in enumerate(headers, 1):
-            cell = ws.cell(row=3, column=col_idx, value=header)
-            cell.font = header_font
-            cell.fill = subhead_fill
-            cell.alignment = center_align
-            cell.border = thin_border
-        ws.row_dimensions[3].height = 22
+            # Sub-title
+            ws.merge_cells(f"A2:{last_col_letter}2")
+            sub_cell = ws["A2"]
+            sub_cell.value = f"Generated by Vani AI  ·  {datetime.now().strftime('%d %B %Y')}"
+            sub_cell.font = Font(italic=True, name="Calibri", size=9, color="FFFFFF")
+            sub_cell.fill = PatternFill("solid", fgColor="2E75B6")
+            sub_cell.alignment = center_align
+            ws.row_dimensions[2].height = 18
 
-        # ── Data rows ─────────────────────────────────────────────────────────
-        alt_fill = PatternFill("solid", fgColor="F2F2F2")
-        for row_idx, row_data in enumerate(data["rows"], 4):
-            fill = alt_fill if row_idx % 2 == 0 else None
-            for col_idx, value in enumerate(row_data, 1):
-                cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                cell.font = body_font
+            # Headers
+            for col_idx, header in enumerate(headers, 1):
+                cell = ws.cell(row=3, column=col_idx, value=header)
+                cell.font = header_font
+                cell.fill = subhead_fill
+                cell.alignment = center_align
                 cell.border = thin_border
-                if fill:
-                    cell.fill = fill
-                if col_idx > 1 and isinstance(value, (int, float)):
-                    cell.number_format = '₹#,##0.00'
-                    cell.alignment = Alignment(horizontal="right")
-                else:
-                    cell.alignment = Alignment(horizontal="left")
+            ws.row_dimensions[3].height = 22
 
-        # ── Totals row ────────────────────────────────────────────────────────
-        if data.get("totals"):
-            total_row = len(data["rows"]) + 4
-            for col_idx, val in enumerate(data["totals"], 1):
-                cell = ws.cell(row=total_row, column=col_idx, value=val)
-                cell.font = total_font
-                cell.fill = total_fill
-                cell.border = thin_border
-                if col_idx > 1 and isinstance(val, (int, float)):
-                    cell.number_format = '₹#,##0.00'
-                    cell.alignment = Alignment(horizontal="right")
-            ws.row_dimensions[total_row].height = 20
+            # Data rows
+            alt_fill = PatternFill("solid", fgColor="F2F2F2")
+            for row_idx, row_data in enumerate(data["rows"], 4):
+                fill = alt_fill if row_idx % 2 == 0 else None
+                for col_idx, value in enumerate(row_data, 1):
+                    # Try to convert numeric string to number for formatting
+                    typed_value = value
+                    if isinstance(value, str):
+                        clean_str = value.replace(",", "").strip()
+                        if re.match(r'^\-?\d+(\.\d+)?$', clean_str):
+                            try:
+                                typed_value = float(clean_str) if '.' in clean_str else int(clean_str)
+                            except ValueError:
+                                pass
 
-        # ── Column widths ─────────────────────────────────────────────────────
-        col_widths = [28, 14, 14, 14, 14]
-        for i, width in enumerate(col_widths[:len(headers)], 1):
-            ws.column_dimensions[get_column_letter(i)].width = width
+                    cell = ws.cell(row=row_idx, column=col_idx, value=typed_value)
+                    cell.font = body_font
+                    cell.border = thin_border
+                    if fill:
+                        cell.fill = fill
+                    if col_idx > 1 and isinstance(typed_value, (int, float)):
+                        header_text = headers[col_idx-1].lower()
+                        if "%" in header_text:
+                            cell.number_format = '0.0%'
+                        elif any(x in header_text for x in ["₹", "rate", "amount", "salary", "revenue", "cost", "price"]):
+                            cell.number_format = '₹#,##0.00'
+                        else:
+                            cell.number_format = '#,##0'
+                        cell.alignment = Alignment(horizontal="right")
+                    else:
+                        cell.alignment = Alignment(horizontal="left")
 
-        # ── Notes sheet ───────────────────────────────────────────────────────
-        ws_notes = wb.create_sheet("Notes")
-        ws_notes["A1"] = "💡 Vani Plugin Notes"
-        ws_notes["A1"].font = Font(bold=True, size=13)
-        ws_notes["A3"] = f"Created: {datetime.now().strftime('%d %B %Y, %I:%M %p')}"
-        ws_notes["A4"] = f"Query: {query}"
-        ws_notes["A5"] = "This file was auto-generated by Vani AI Plugin System."
-        ws_notes.column_dimensions["A"].width = 60
+            # Totals row
+            if data.get("totals"):
+                total_row = len(data["rows"]) + 4
+                for col_idx, val in enumerate(data["totals"], 1):
+                    typed_val = val
+                    if isinstance(val, str):
+                        clean_str = val.replace(",", "").strip()
+                        if re.match(r'^\-?\d+(\.\d+)?$', clean_str):
+                            try:
+                                typed_val = float(clean_str) if '.' in clean_str else int(clean_str)
+                            except ValueError:
+                                pass
 
-        wb.save(str(filepath))
+                    cell = ws.cell(row=total_row, column=col_idx, value=typed_val)
+                    cell.font = total_font
+                    cell.fill = total_fill
+                    cell.border = thin_border
+                    if col_idx > 1 and isinstance(typed_val, (int, float)):
+                        header_text = headers[col_idx-1].lower()
+                        if "%" in header_text:
+                            cell.number_format = '0.0%'
+                        elif any(x in header_text for x in ["₹", "rate", "amount", "salary", "revenue", "cost", "price"]):
+                            cell.number_format = '₹#,##0.00'
+                        else:
+                            cell.number_format = '#,##0'
+                        cell.alignment = Alignment(horizontal="right")
+                ws.row_dimensions[total_row].height = 20
 
-        # Open in Numbers / Excel
-        try:
-            import sys, subprocess
-            if sys.platform == "darwin":
-                subprocess.Popen(["open", str(filepath)])
-            elif sys.platform == "win32":
-                os.startfile(str(filepath))
-        except Exception:
-            pass
+            # Column widths
+            for i in range(1, len(headers) + 1):
+                w = 28 if i == 1 else 16
+                ws.column_dimensions[get_column_letter(i)].width = w
+
+            # Notes sheet
+            ws_notes = wb.create_sheet("Notes")
+            ws_notes["A1"] = "💡 Vani Plugin Notes"
+            ws_notes["A1"].font = Font(bold=True, size=13)
+            ws_notes["A3"] = f"Created: {datetime.now().strftime('%d %B %Y, %I:%M %p')}"
+            ws_notes["A4"] = f"Query: {query}"
+            ws_notes["A5"] = "This file was auto-generated by Vani AI Plugin System."
+            ws_notes.column_dimensions["A"].width = 60
+
+            wb.save(str(filepath))
+
+            # Launch LibreOffice directly or fallback
+            try:
+                opened = False
+                if sys.platform == "darwin":
+                    for app_name in ["LibreOffice", "OpenOffice"]:
+                        app_path = f"/Applications/{app_name}.app"
+                        bin_path = f"{app_path}/Contents/MacOS/soffice"
+                        if os.path.exists(bin_path):
+                            subprocess.Popen([bin_path, "--calc", str(filepath)])
+                            opened = True
+                            break
+                if not opened:
+                    if sys.platform == "darwin":
+                        subprocess.Popen(["open", str(filepath)])
+                    elif sys.platform == "win32":
+                        os.startfile(str(filepath))
+            except Exception:
+                pass
+
+        # Launch background task
+        asyncio.create_task(_generate_excel_bg())
 
         return PluginResult(
             success=True,
-            message=f"✅ {table_type} Excel file ready! Desktop pe '{filename}' dekho 📊",
+            message=f"✅ {table_type_predicted} Excel file ready ho raha hai! Desktop pe dekho 📊",
             artifact_path=str(filepath),
             artifact_type="xlsx",
-            ui_payload={"filename": filename, "table_type": table_type}
+            ui_payload={"filename": filename, "table_type": table_type_predicted}
         )
+
+    def _generate_excel_via_llm(self, query: str, context: PluginContext) -> dict | None:
+        import requests
+        
+        # Build prompt using recent messages
+        recent = context.recent_messages[-6:] if context.recent_messages else []
+        conversation_context = ""
+        for msg in recent:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            conversation_context += f"{role.upper()}: {content}\n"
+            
+        system_prompt = (
+            "You are a spreadsheet design expert.\n"
+            "Generate a highly detailed and context-appropriate Excel table based on the user request and conversation history.\n"
+            "Rules:\n"
+            "1. Output ONLY a valid JSON object. Do not output any explanation, markdown formatting (do not wrap in ```json), or extra words. Start directly with '{' and end with '}'.\n"
+            "2. The JSON object MUST contain the following keys:\n"
+            "   - \"table_type\": A short title for the table (e.g. \"Sports Shop MIS\", \"Travel Expenses\").\n"
+            "   - \"headers\": A list of strings representing column header names (usually 3 to 6 columns). Include symbols like (₹) or (%) where appropriate.\n"
+            "   - \"rows\": A list of rows, where each row is a list of values matching the headers in order and length. Use numbers for numeric columns (do not wrap numbers in quotes).\n"
+            "   - \"totals\": A list of values representing the totals row (same length as headers). The first element is usually \"TOTAL\" or \"Overall Average\", followed by sums/averages for numeric columns, and empty strings \"\" for text columns. If not applicable, set this to null.\n"
+            "3. Ensure the columns are logical, professional, and contain realistic data based on the user's query.\n"
+            "4. Do not include duplicate rows."
+        )
+        
+        user_prompt = (
+            f"Conversation History:\n{conversation_context}\n"
+            f"User request: {query}\n\n"
+            "Provide the spreadsheet JSON object now:"
+        )
+        
+        try:
+            model_name = self._get_best_ollama_model()
+            full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
+            r = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": model_name,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 400
+                    }
+                },
+                timeout=12
+            )
+            r.raise_for_status()
+            response_text = r.json().get("response", "").strip()
+            if not response_text:
+                return None
+            
+            # Clean up potential markdown wrapper code block
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL | re.IGNORECASE)
+            if json_match:
+                json_str = json_match.group(1).strip()
+            else:
+                first_brace = response_text.find('{')
+                last_brace = response_text.rfind('}')
+                if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                    json_str = response_text[first_brace:last_brace+1]
+                else:
+                    json_str = response_text
+                    
+            data = json.loads(json_str)
+            if not isinstance(data, dict) or "headers" not in data or "rows" not in data:
+                return None
+                
+            headers_len = len(data["headers"])
+            valid_rows = []
+            for row in data["rows"]:
+                if isinstance(row, list):
+                    if len(row) < headers_len:
+                        row += [""] * (headers_len - len(row))
+                    elif len(row) > headers_len:
+                        row = row[:headers_len]
+                    valid_rows.append(row)
+            data["rows"] = valid_rows
+            
+            if data.get("totals") and isinstance(data["totals"], list):
+                t_row = data["totals"]
+                if len(t_row) < headers_len:
+                    t_row += [""] * (headers_len - len(t_row))
+                elif len(t_row) > headers_len:
+                    t_row = t_row[:headers_len]
+                data["totals"] = t_row
+            else:
+                data["totals"] = None
+                
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to generate Excel data via Ollama: {e}")
+            return None
 
     def _detect_table_type(self, query: str, context: PluginContext) -> str:
         q = query.lower()
@@ -187,6 +342,10 @@ class ExcelPlugin(VaniPlugin):
             return "Investment Tracker"
         if any(x in q for x in ["tax", "itr", "gst"]):
             return "Tax Summary"
+        if "mis" in q:
+            return "MIS Report"
+        if any(x in q for x in ["data entry", "data-entry", "entry log"]):
+            return "Data Entry Log"
         return "Financial Table"
 
     def _extract_data_from_context(
@@ -244,6 +403,28 @@ class ExcelPlugin(VaniPlugin):
                     [datetime.now().strftime("%d-%m-%Y"), "Utilities",  "Electricity",   1500,  "Net Banking"],
                 ],
                 "totals": ["", "", "TOTAL", 3299, ""],
+            },
+            "MIS Report": {
+                "headers": ["KPI Metric", "Target Target", "Q1 Actual", "Q2 Actual", "Achievement %"],
+                "rows": [
+                    ["Sales Revenue (₹)",  5000000, 4800000, 5200000, 1.04],
+                    ["New Customers",      1200,    1150,    1300,    1.08],
+                    ["Customer Retention %", 0.95,    0.93,    0.96,    1.01],
+                    ["Marketing Expense (₹)", 800000,   850000,   780000,  0.975],
+                    ["Operating Margin %",   0.22,    0.20,    0.23,    1.045],
+                ],
+                "totals": ["Overall Summary", "", "", "", "103.0%"],
+            },
+            "Data Entry Log": {
+                "headers": ["Record ID", "Employee Name", "Department", "Hourly Rate (₹)", "Hours Worked"],
+                "rows": [
+                    ["REC-001", "Aarav Sharma", "Engineering",  800,  45],
+                    ["REC-002", "Ishita Patel",  "Marketing",    550,  40],
+                    ["REC-003", "Kabir Singh",   "Sales",        600,  48],
+                    ["REC-004", "Riya Sen",      "HR",           500,  42],
+                    ["REC-005", "Dev Malhotra",  "Finance",      750,  40],
+                ],
+                "totals": ["Total Records: 5", "", "", "Avg Rate: 640", "Total Hours: 215"],
             },
         }
 

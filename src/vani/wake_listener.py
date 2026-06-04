@@ -57,10 +57,10 @@ IS_WINDOWS = sys.platform == "win32"
 # ── Speaker verification imports (lazy, guarded) ──────────────────────────────
 try:
     from vani.audio.wake_verifier import verify_wake_audio_sync as _verify_wake
-    from vani.audio.wake_verifier import VERIFY_ENABLED as _VERIFY_ENABLED
+    from vani.audio.wake_verifier import is_verify_enabled as _is_verify_enabled
 except ImportError:
     _verify_wake = None
-    _VERIFY_ENABLED = False
+    def _is_verify_enabled(): return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ def _do_wake(source: str) -> None:
     log.info("[wake] triggered by %s", source)
 
     # Speaker verification gate (only for voice wakes — clap always passes)
-    if source == "voice" and _VERIFY_ENABLED and _verify_wake is not None:
+    if source == "voice" and _is_verify_enabled() and _verify_wake is not None:
         try:
             import numpy as np
             with _AUDIO_RING_LOCK:
@@ -134,6 +134,15 @@ def _do_wake(source: str) -> None:
         wake_vani()
     except Exception as exc:
         log.exception("[wake] wake_vani() failed: %s", exc)
+
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:5500/wake_reset", method="POST")
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            resp.read()
+        log.info("[wake] sent /wake_reset to Python backend")
+    except Exception as exc:
+        log.warning("[wake] could not send /wake_reset: %s", exc)
 
     _speak_ack(get_wake_reply())
     _notify_mac("Vani", f"Woke via {source}")

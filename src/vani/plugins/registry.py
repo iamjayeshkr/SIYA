@@ -95,6 +95,28 @@ class VaniPlugin:
         q = query.lower()
         return any(t.lower() in q for t in self.triggers)
 
+    def _get_best_ollama_model(self) -> str:
+        """Query local Ollama and return the fastest available/installed model."""
+        import requests
+        preferred = ["qwen2.5:1.5b", "llama3.2:1b", "qwen2.5:3b", "llama3.2:latest"]
+        try:
+            r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
+            if r.status_code == 200:
+                models = [m["name"] for m in r.json().get("models", [])]
+                for p in preferred:
+                    if p in models:
+                        return p
+                for p in preferred:
+                    p_base = p.split(":")[0]
+                    for m in models:
+                        if m.startswith(p_base):
+                            return m
+                if models:
+                    return models[0]
+        except Exception:
+            pass
+        return "qwen2.5:3b"  # Default fallback
+
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -153,13 +175,17 @@ class PluginRegistry:
             if p.matches(query):
                 logger.info(f"[plugins] Routing to {p.name}: '{query}'")
                 try:
-                    return await p.on_activate(query, context)
+                    res = await p.on_activate(query, context)
+                    await send_plugin_signal(p.name, res)
+                    return res
                 except Exception as e:
                     logger.error(f"[plugins] {p.name} error: {e}")
-                    return PluginResult(
+                    res = PluginResult(
                         success=False,
                         message=f"Plugin error in {p.name}: {e}"
                     )
+                    await send_plugin_signal(p.name, res)
+                    return res
         return None
 
     async def broadcast_memory_save(self, messages: list[dict]) -> list[str]:
@@ -190,7 +216,7 @@ def get_registry() -> PluginRegistry:
 
 
 def _bootstrap_plugins(registry: PluginRegistry) -> None:
-    """Register all built-in plugins at startup."""
+    """Register all built-in plugins at startup, then load custom ones."""
     from .builtin.obsidian_plugin import ObsidianPlugin
     from .builtin.excel_plugin import ExcelPlugin
     from .builtin.diagram_plugin import DiagramPlugin
@@ -202,4 +228,97 @@ def _bootstrap_plugins(registry: PluginRegistry) -> None:
     registry.register(DiagramPlugin())
     registry.register(ConversationMemoryPlugin())
     registry.register(WhiteboardPlugin())
+
+    # Custom plugins from PROJECT_ROOT / "plugins"
+    from vani.config import PROJECT_ROOT
+    custom_dir = PROJECT_ROOT / "plugins"
+    if not custom_dir.exists():
+        try:
+            custom_dir.mkdir(parents=True, exist_ok=True)
+            template_code = '''"""
+Template Plugin for Vani OS.
+Save this file as `plugins/my_custom_plugin.py` to auto-load.
+"""
+from vani.plugins.registry import VaniPlugin, PluginResult, PluginContext
+
+class MyCustomPlugin(VaniPlugin):
+    name = "custom"
+    icon = "⚡"
+    description = "Custom superpower plugin for Vani"
+    category = "general"
+    enabled = True  # Enabled by default for custom plugins
+    triggers = ["run custom test", "my custom feature"]
+
+    async def on_activate(self, query: str, context: PluginContext) -> PluginResult:
+        # Perform any custom Python actions here (e.g. call an API, write to a file, etc.)
+        return PluginResult(
+            success=True,
+            message="Custom plugin successfully executed! I can do anything now.",
+            ui_payload={"data": "Custom payload"}
+        )
+'''
+            (custom_dir / "template_plugin.py.example").write_text(template_code, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Could not create custom plugins dir: {e}")
+
+    # Load custom plugins dynamically
+    import importlib.util
+    import sys
+    for py_file in custom_dir.glob("*.py"):
+        if py_file.name.startswith("_"):
+            continue
+        try:
+            module_name = f"vani_custom_plugin_{py_file.stem}"
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+
+                # Scan for VaniPlugin subclasses in this module
+                registered_any = False
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if (
+                        isinstance(attr, type)
+                        and issubclass(attr, VaniPlugin)
+                        and attr is not VaniPlugin
+                    ):
+                        plugin_instance = attr()
+                        plugin_instance.enabled = True
+                        registry.register(plugin_instance)
+                        registered_any = True
+                if registered_any:
+                    logger.info(f"[plugins] Loaded custom plugin file: {py_file.name}")
+        except Exception as e:
+            logger.error(f"[plugins] Failed to load custom plugin {py_file.name}: {e}")
+
     logger.info(f"[plugins] {len(registry._plugins)} plugins registered")
+
+
+async def send_plugin_signal(plugin_name: str, result: PluginResult) -> None:
+    from vani.config import PACKAGE_ROOT
+    import pathlib
+    import time
+    import json
+
+    plugin_signal_path = PACKAGE_ROOT / "ui" / "plugin_signal.json"
+    payload = {
+        "ts": time.time(),
+        "plugin_name": plugin_name,
+        "success": result.success,
+        "message": result.message,
+        "artifact_path": result.artifact_path,
+        "artifact_type": result.artifact_type,
+        "ui_payload": result.ui_payload,
+    }
+    def _write():
+        try:
+            tmp = plugin_signal_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(plugin_signal_path)
+        except Exception as e:
+            logger.warning("PLUGIN_SIGNAL write failed: %s", e)
+
+    import asyncio
+    await asyncio.get_event_loop().run_in_executor(None, _write)

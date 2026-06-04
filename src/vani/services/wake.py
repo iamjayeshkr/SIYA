@@ -78,4 +78,20 @@ def is_wake_command(text: str) -> bool:
     normalized = _normalize(text)
     if not normalized:
         return False
-    return any(phrase in normalized for phrase in _WAKE_PHRASES)
+    
+    for phrase in _WAKE_PHRASES:
+        if phrase in ("vani", "vaani"):
+            if normalized == phrase:
+                return True
+        else:
+            if phrase in normalized:
+                # Specific allow-list for common variations like "kar do"
+                if phrase in ("vani ko activate", "vaani ko activate") and "kar do" in normalized:
+                    return True
+                # Ensure it's a clean activation rather than a compound query
+                if normalized == phrase or normalized.startswith(phrase + " ") or normalized.endswith(" " + phrase):
+                    query_words = {"search", "google", "weather", "bata", "batao", "play", "music", "song", "open", "close", "karo", "kar"}
+                    words = normalized.split()
+                    if not any(qw in words for qw in query_words):
+                        return True
+    return False

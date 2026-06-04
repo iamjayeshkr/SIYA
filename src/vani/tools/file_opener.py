@@ -81,7 +81,21 @@ async def _search_file(query, index):
 
 def _open_file(path: str):
     if IS_MAC:
-        subprocess.call(["open", path])
+        opened = False
+        # If it's a spreadsheet, try to open in LibreOffice/OpenOffice first
+        ext = os.path.splitext(path)[1].lower() if path else ""
+        if ext in (".xlsx", ".xls", ".ods", ".csv"):
+            for app_name in ["LibreOffice", "OpenOffice"]:
+                bin_path = f"/Applications/{app_name}.app/Contents/MacOS/soffice"
+                if os.path.exists(bin_path):
+                    try:
+                        subprocess.Popen([bin_path, "--calc", path])
+                        opened = True
+                        break
+                    except Exception:
+                        pass
+        if not opened:
+            subprocess.call(["open", path])
     elif IS_WINDOWS:
         os.startfile(path)
     else:

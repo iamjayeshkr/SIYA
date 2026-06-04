@@ -33,7 +33,7 @@ def test_site_specific_search_extraction_and_urls():
         "two sum",
     )
     assert search._site_search_url("leetcode.com", "two sum") == (
-        "https://www.google.com/search?q=site:leetcode.com+two+sum"
+        "https://leetcode.com/search/?q=two+sum"
     )
     assert search._site_search_url("google.com", "cyber security article") == (
         "https://www.google.com/search?q=cyber+security+article"

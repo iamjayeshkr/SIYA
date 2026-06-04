@@ -65,9 +65,9 @@ def test_youtube_play_runs_ytdlp_resolution_in_background(monkeypatch):
     monkeypatch.setattr(control, "_open_url", fake_open_url)
 
     reply = start_youtube_play_background("kesariya", browser="default")
-    assert "yt-dlp background" in reply
+    assert "YouTube par dhoondh rahi hoon" in reply
 
     for job in list(control._youtube_play_jobs):
         job.join(timeout=2)
 
-    assert opened == [("https://www.youtube.com/watch?v=abc123XYZ09", "default", False)]
+    assert opened == [("https://www.youtube.com/watch?v=abc123XYZ09&autoplay=1", "default", False)]

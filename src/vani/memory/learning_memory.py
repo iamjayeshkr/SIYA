@@ -114,6 +114,18 @@ _QUIZ_PHRASES = [
 def is_learn_intent(query: str) -> bool:
     """True if user wants Vani to learn/remember something."""
     q = query.lower().strip()
+    
+    # Exclude note creation, diagram generation, spreadsheet design, or file actions
+    exclusions = {
+        "create a note", "create note", "make a note", "make note",
+        "take a note", "take note", "save a note", "save note",
+        "write a note", "write note", "obsidian", "excel", "spreadsheet",
+        "flowchart", "diagram", "draw", "banao", "open", "kholo", "likh"
+    }
+    for exc in exclusions:
+        if exc in q:
+            return False
+
     for phrase in _LEARN_PHRASES:
         if phrase in q:
             return True

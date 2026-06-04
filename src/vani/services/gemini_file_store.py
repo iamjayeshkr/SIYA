@@ -231,3 +231,14 @@ def upload_in_background(filename: str, data: bytes, mime_type: str = "",
     t = threading.Thread(target=_worker, daemon=True, name="gemini-file-upload")
     t.start()
     return t
+
+
+def clear_active_gemini_files() -> None:
+    """Manually clear all stored Gemini File references from SQLite."""
+    try:
+        with _connect() as conn:
+            conn.execute("DELETE FROM gemini_files")
+            conn.commit()
+            log.info("[GEMINI_FILES] Active gemini files cleared")
+    except Exception as e:
+        log.warning(f"[GEMINI_FILES] Failed to clear gemini files db: {e}")

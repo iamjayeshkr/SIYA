@@ -16,7 +16,10 @@ import os
 import re
 import json
 import logging
+import sys
+import asyncio
 import subprocess
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +33,7 @@ class DiagramPlugin(VaniPlugin):
     icon = "🗺️"
     description = "Draws flowcharts, concept maps, and system diagrams in your browser."
     category = "visual"
-    enabled = False
+    enabled = True
     triggers = [
         "diagram banao", "flowchart banao", "flowchart", "diagram",
         "draw this", "visually explain", "concept map", "mind map",
@@ -40,11 +43,7 @@ class DiagramPlugin(VaniPlugin):
     ]
 
     async def on_activate(self, query: str, context: PluginContext) -> PluginResult:
-        # Build Mermaid diagram from context
-        diagram_type, mermaid_code = self._build_diagram(query, context)
         title = self._extract_title(query, context)
-
-        html = self._render_html(title, diagram_type, mermaid_code)
 
         desktop = Path.home() / "Desktop"
         desktop.mkdir(exist_ok=True)
@@ -52,11 +51,41 @@ class DiagramPlugin(VaniPlugin):
         safe_title = re.sub(r'[^\w]', '_', title)[:30]
         filename = f"Vani_Diagram_{safe_title}_{now}.html"
         filepath = desktop / filename
-        filepath.write_text(html, encoding="utf-8")
 
-        # Open in browser
+        # Write placeholder HTML immediately (with spinner and auto-refresh)
+        placeholder_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vani Diagram — Generating...</title>
+<style>
+  body {{
+    background: #0f0a1e; color: #e2e8f0; font-family: sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100vh; margin: 0;
+  }}
+  .spinner {{
+    border: 4px solid rgba(255,255,255,0.1); width: 50px; height: 50px;
+    border-radius: 50%; border-left-color: #7c3aed;
+    animation: spin 1s linear infinite;
+  }}
+  @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+</style>
+<script>
+  setTimeout(function() {{ window.location.reload(); }}, 1500);
+</script>
+</head>
+<body>
+  <div class="spinner"></div>
+  <h2 style="margin-top: 20px;">🗺️ Vani is drawing your diagram...</h2>
+  <p style="color: #64748b;">Please wait, generating custom Mermaid flowchart in background.</p>
+</body>
+</html>"""
+        filepath.write_text(placeholder_html, encoding="utf-8")
+
+        # Open in browser immediately
         try:
-            import sys
             if sys.platform == "darwin":
                 subprocess.Popen(["open", str(filepath)])
             elif sys.platform == "win32":
@@ -66,20 +95,47 @@ class DiagramPlugin(VaniPlugin):
         except Exception:
             pass
 
+        # Define background task to run diagram building and update file
+        async def _generate_diagram_bg():
+            loop = asyncio.get_running_loop()
+            diag_type, mermaid_code = await loop.run_in_executor(None, self._build_diagram, query, context)
+            final_html = self._render_html(title, diag_type, mermaid_code)
+            filepath.write_text(final_html, encoding="utf-8")
+
+        # Launch background task
+        asyncio.create_task(_generate_diagram_bg())
+
         return PluginResult(
             success=True,
-            message=f"🗺️ Diagram ready! Browser mein '{title}' khul gaya hai.",
+            message=f"🗺️ Diagram ready ho raha hai! Browser mein '{title}' khul gaya hai.",
             artifact_path=str(filepath),
             artifact_type="html",
             ui_payload={
-                "diagram_type": diagram_type,
+                "diagram_type": "flowchart",
                 "title": title,
                 "filename": filename,
-                "mermaid_code": mermaid_code,
+                "mermaid_code": "Generating...",
             }
         )
 
     def _extract_title(self, query: str, context: PluginContext) -> str:
+        # Check if query contains Save_Note or is a Python tool call string
+        if len(query) > 100 or "Save_Note" in query or "{" in query:
+            match = re.search(r"Title=['\"](.*?)['\"]", query, re.IGNORECASE)
+            if match:
+                extracted = match.group(1).strip()
+                if extracted:
+                    return extracted
+            
+            recent_text = " ".join(m.get("content", "") for m in context.recent_messages[-3:]).lower()
+            if "two pointer" in recent_text:
+                return "Two Pointer Flowchart"
+            if "three sum" in recent_text:
+                return "Three Sum Flowchart"
+            if "procedural" in recent_text:
+                return "Procedural Flowchart"
+            return "Concept Diagram"
+
         # Look for topic in last few messages
         recent_text = " ".join(
             m.get("content", "") for m in context.recent_messages[-4:]
@@ -91,13 +147,109 @@ class DiagramPlugin(VaniPlugin):
             m = re.search(pattern, recent_text)
             if m:
                 return m.group(1).strip()
+        
+        # Clean up query triggers to get a nicer fallback title
+        q = query
+        for trigger in self.triggers:
+            if trigger in q.lower():
+                q = re.sub(re.escape(trigger), "", q, flags=re.IGNORECASE)
+        # Strip leading verbs, request phrases and articles
+        q = re.sub(r"^(?:make|create|draw|design|write|show|generate|build|give|save)\s+(?:me\s+)?(?:a\s+|an\s+)?", "", q, flags=re.IGNORECASE)
+        # Clean up double spaces or leading/trailing prepositions
+        q = re.sub(r"^\s*(?:for|of|about|to)\s+", "", q, flags=re.IGNORECASE)
+        q = re.sub(r"\s+", " ", q)
+        q = q.strip().title()
+        if len(q) > 3:
+            return q
         return "Concept Diagram"
+
+    def _generate_mermaid_via_llm(self, query: str, context: PluginContext) -> tuple[str, str] | None:
+        # Build prompt using recent messages
+        recent = context.recent_messages[-6:] if context.recent_messages else []
+        conversation_context = ""
+        for msg in recent:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            conversation_context += f"{role.upper()}: {content}\n"
+            
+        system_prompt = (
+            "You are an expert Mermaid diagram designer.\n"
+            "Generate a highly detailed and visually appealing Mermaid diagram based on the user request and conversation history.\n"
+            "Rules:\n"
+            "1. Output ONLY the Mermaid diagram code. Do not write any explanations, notes, or normal text.\n"
+            "2. Wrap your output in a markdown block starting with ```mermaid and ending with ```. If you cannot do a block, just output the raw Mermaid diagram text.\n"
+            "3. Support standard diagrams like flowchart (flowchart TD / flowchart LR), mindmap (mindmap), or sequence diagram (sequenceDiagram).\n"
+            "4. Do NOT use any backslashes inside node labels.\n"
+            "5. Make it rich, detailed, and directly answering the user's specific context.\n"
+            "6. Make sure the nodes have proper styles if relevant (e.g. style A fill:#7c3aed,color:#fff)."
+        )
+        
+        user_prompt = (
+            f"Conversation History:\n{conversation_context}\n"
+            f"User request: {query}\n\n"
+            "Provide the Mermaid diagram code now:"
+        )
+        
+        try:
+            model_name = self._get_best_ollama_model()
+            full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
+            r = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": model_name,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 500
+                    }
+                },
+                timeout=12
+            )
+            r.raise_for_status()
+            response_text = r.json().get("response", "").strip()
+            if not response_text:
+                return None
+            
+            # Extract Mermaid code
+            mermaid_code = response_text
+            # Try to extract code between ```mermaid and ```
+            mermaid_match = re.search(r'```mermaid\s*(.*?)\s*```', response_text, re.DOTALL | re.IGNORECASE)
+            if mermaid_match:
+                mermaid_code = mermaid_match.group(1).strip()
+            else:
+                generic_match = re.search(r'```\s*(.*?)\s*```', response_text, re.DOTALL)
+                if generic_match:
+                    mermaid_code = generic_match.group(1).strip()
+            
+            # Sanity check
+            lower_code = mermaid_code.lower()
+            if not any(x in lower_code for x in ["flowchart", "graph", "sequenceboard", "sequencediagram", "mindmap", "classdiagram", "gantt", "pie"]):
+                return None
+                
+            # Classify diagram type
+            diagram_type = "flowchart"
+            if "mindmap" in lower_code:
+                diagram_type = "mindmap"
+            elif "sequence" in lower_code:
+                diagram_type = "sequence"
+                
+            return diagram_type, mermaid_code
+        except Exception as e:
+            logger.warning(f"Failed to generate Mermaid via Ollama: {e}")
+            return None
 
     def _build_diagram(self, query: str, context: PluginContext) -> tuple[str, str]:
         """
         Detect diagram type and build Mermaid syntax from conversation context.
         Returns (diagram_type, mermaid_code).
         """
+        llm_result = self._generate_mermaid_via_llm(query, context)
+        if llm_result:
+            logger.info("Successfully generated diagram using Ollama LLM.")
+            return llm_result
+
+        logger.info("Ollama generation failed or returned invalid Mermaid. Falling back to templates.")
         q = query.lower()
         recent = context.recent_messages[-6:]
         all_text = " ".join(m.get("content", "") for m in recent)
@@ -112,6 +264,48 @@ class DiagramPlugin(VaniPlugin):
 
     def _flowchart_from_text(self, text: str, query: str) -> str:
         """Build a generic flowchart. Tries to extract steps, falls back to template."""
+        q = (query + " " + text).lower()
+        
+        if "two pointer" in q or "two-pointer" in q:
+            return """flowchart TD
+    A([🚀 Two Pointer Approach]) --> B[Initialize: Left = 0, Right = N-1]
+    B --> C{Loop: While Left < Right}
+    C -- Yes --> D{Compare elements at Left & Right}
+    D -- Condition Met --> E[Update result / Return]
+    D -- Value too small/large --> F[Move Left pointer right OR Right pointer left]
+    F --> C
+    C -- No --> G([🎯 End / Result Not Found])
+    style A fill:#7c3aed,color:#fff
+    style G fill:#16a34a,color:#fff
+    style C fill:#0369a1,color:#fff"""
+
+        if "procedural" in q:
+            return """flowchart TD
+    A([🚀 Procedural Approach]) --> B[Step 1: Get Inputs / Parameters]
+    B --> C[Step 2: Execute Sequential Function Calls]
+    C --> D[Step 3: Modify Global/Local States]
+    D --> E[Step 4: Output / Return Results]
+    E --> F([🎯 End])
+    style A fill:#7c3aed,color:#fff
+    style F fill:#16a34a,color:#fff
+    style C fill:#0369a1,color:#fff"""
+            
+        if "sliding window" in q:
+            return """flowchart TD
+    A([🚀 Sliding Window]) --> B[Initialize: Start = 0, End = 0]
+    B --> C{Loop: While End < Array Length}
+    C -- Yes --> D[Expand window: include element at End]
+    D --> E{Is window valid?}
+    E -- No --> F[Contract window: increment Start]
+    F --> E
+    E -- Yes --> G[Update max/min result]
+    G --> H[Increment End]
+    H --> C
+    C -- No --> I([🎯 End / Return result])
+    style A fill:#7c3aed,color:#fff
+    style I fill:#16a34a,color:#fff
+    style C fill:#0369a1,color:#fff"""
+
         steps = re.findall(r'\d+[\.\)]\s+(.+?)(?=\d+[\.\)]|$)', text, re.DOTALL)
         steps = [s.strip()[:40] for s in steps if len(s.strip()) > 3][:8]
 
@@ -163,6 +357,7 @@ class DiagramPlugin(VaniPlugin):
     A-->>U: Answer"""
 
     def _render_html(self, title: str, diagram_type: str, mermaid_code: str) -> str:
+        safe_mermaid_code = mermaid_code.replace('`', '\\`')
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -267,7 +462,7 @@ class DiagramPlugin(VaniPlugin):
     flowchart: {{ curve: 'basis' }},
   }});
   function copyCode() {{
-    navigator.clipboard.writeText(`{mermaid_code.replace('`', '\\`')}`);
+    navigator.clipboard.writeText(`{safe_mermaid_code}`);
     alert('Mermaid code copied!');
   }}
 </script>

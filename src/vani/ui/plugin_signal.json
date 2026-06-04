@@ -1,0 +1,12 @@
+{
+  "ts": 1780472773.616441,
+  "plugin_name": "obsidian",
+  "success": true,
+  "message": "✅ Obsidian mein note save ho gaya hai: 'Parking Lot Low Level Design'!",
+  "artifact_path": "/Users/rudra/Library/Mobile Documents/iCloud~md~obsidian/Documents/FirstVault/MY VAULT/Vani Conversations/Parking Lot Low Level Design.md",
+  "artifact_type": "markdown",
+  "ui_payload": {
+    "note_title": "Parking Lot Low Level Design",
+    "vault_path": "/Users/rudra/Library/Mobile Documents/iCloud~md~obsidian/Documents/FirstVault/MY VAULT"
+  }
+}

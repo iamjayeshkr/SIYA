@@ -1,0 +1,21 @@
+"""
+Template Plugin for Vani OS.
+Save this file as `plugins/my_custom_plugin.py` to auto-load.
+"""
+from vani.plugins.registry import VaniPlugin, PluginResult, PluginContext
+
+class MyCustomPlugin(VaniPlugin):
+    name = "custom"
+    icon = "⚡"
+    description = "Custom superpower plugin for Vani"
+    category = "general"
+    enabled = True  # Enabled by default for custom plugins
+    triggers = ["run custom test", "my custom feature"]
+
+    async def on_activate(self, query: str, context: PluginContext) -> PluginResult:
+        # Perform any custom Python actions here (e.g. call an API, write to a file, etc.)
+        return PluginResult(
+            success=True,
+            message="Custom plugin successfully executed! I can do anything now.",
+            ui_payload={"data": "Custom payload"}
+        )

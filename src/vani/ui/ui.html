@@ -120,7 +120,7 @@ html, body {
   margin-top: 2px;
 }
 
-.quit-btn {
+.quit-btn, .minimize-btn {
   width: 30px; height: 30px;
   border-radius: 50%;
   border: 1px solid var(--rim);
@@ -132,7 +132,7 @@ html, body {
   backdrop-filter: blur(8px);
   transition: all 0.2s;
 }
-.quit-btn:hover { background: rgba(196,126,255,0.2); color: var(--text); border-color: var(--accent); }
+.quit-btn:hover, .minimize-btn:hover { background: rgba(196,126,255,0.2); color: var(--text); border-color: var(--accent); }
 
 .spacer { flex: 1; }
 
@@ -436,6 +436,7 @@ body.connected .status-txt { color: var(--green); }
 }
 #panel-toggle:hover  { border-color: var(--accent); background: rgba(196,126,255,0.12); }
 #panel-toggle.active { background: rgba(124,58,237,0.3); border-color: var(--accent); }
+</style>
 
 
 <style id="vani-plugin-styles">
@@ -771,8 +772,6 @@ body.connected .status-txt { color: var(--green); }
 }
 
 </style>
-
-</style>
 </head>
 <body>
 
@@ -810,7 +809,10 @@ body.connected .status-txt { color: var(--green); }
       <div class="logo">वाणी</div>
       <div class="logo-sub">by Rudra</div>
     </div>
-    <button class="quit-btn" onclick="quit()" title="Close">✕</button>
+    <div style="display: flex; gap: 8px;">
+      <button class="minimize-btn" onclick="minimize()" title="Minimize">─</button>
+      <button class="quit-btn" onclick="quit()" title="Close">✕</button>
+    </div>
   </div>
   <div class="spacer"></div>
   <div class="hud">
@@ -1142,6 +1144,13 @@ function connectStateWs() {
     ws.onmessage = (evt) => {
       try {
         const s = JSON.parse(evt.data);
+        if (s.action === "clear_chat") {
+          const chatHist = document.getElementById('chat-history');
+          if (chatHist) chatHist.innerHTML = '';
+          _conversationMessages = [];
+          if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+          return;
+        }
         if (s.connected) hideOverlay();
         updateState(s);
       } catch(e) {}
@@ -1322,11 +1331,35 @@ function startPywebviewPolling() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  QUIT
+//  QUIT & MINIMIZE
 // ════════════════════════════════════════════════════════════
 async function quit() {
-  try { await window.pywebview.api.quit(); }
-  catch(e) { window.close(); }
+  try {
+    if ("__TAURI_INTERNALS__" in window) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("quit_app");
+    } else {
+      await window.pywebview.api.quit();
+    }
+  } catch(e) {
+    window.close();
+  }
+}
+
+async function minimize() {
+  try {
+    if ("__TAURI_INTERNALS__" in window) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("minimize_window");
+    } else {
+      await fetch("http://127.0.0.1:5500/minimize", { method: "POST" });
+    }
+  } catch(e) {
+    console.warn("Minimize failed, trying fallback:", e);
+    try {
+      await fetch("http://127.0.0.1:5500/minimize", { method: "POST" });
+    } catch(err) {}
+  }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2326,6 +2359,50 @@ docFile.addEventListener('change', () => {
     }
   }
 
+  // ── Polling plugin_signal.json ────────────────────────────────────────────
+  let _lastPluginTs = 0;
+  let _pluginPollInterval = null;
+
+  function startPluginPolling() {
+    if (_pluginPollInterval) return;
+    _pluginPollInterval = setInterval(pollPluginSignal, 600);
+  }
+
+  async function pollPluginSignal() {
+    try {
+      const res = await fetch('/plugin_signal.json?_=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || !data.ts) return;
+      if (data.ts === _lastPluginTs) return;
+      _lastPluginTs = data.ts;
+
+      // Auto-open plugin panel and switch to run tab
+      if (!_pluginPanelOpen) {
+        _pluginPanelOpen = true;
+        document.getElementById('plugin-panel').classList.add('open');
+      }
+      ppSwitchTab('run');
+
+      // Update result
+      const resultEl = document.getElementById('pp-run-result');
+      if (resultEl) {
+        if (!data.success) {
+          resultEl.className = 'pp-result visible error';
+          resultEl.textContent = data.message || 'Plugin error';
+        } else {
+          resultEl.className = 'pp-result visible';
+          let html = `✅ ${data.message}`;
+          if (data.artifact_path) {
+            html += `<br><span style="color:#64748b;font-size:0.72rem">📁 ${data.artifact_path}</span>`;
+          }
+          resultEl.innerHTML = html;
+        }
+      }
+    } catch (_) {
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function() {
     // Pre-load plugin list silently
@@ -2334,6 +2411,8 @@ docFile.addEventListener('change', () => {
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && _pluginPanelOpen) togglePluginPanel();
     });
+    // Start polling plugin signals
+    startPluginPolling();
   });
 
 })();

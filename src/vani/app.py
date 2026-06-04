@@ -181,6 +181,27 @@ def _ws_push_state():
             except Exception: pass
 
 
+def _ws_send_all(msg_dict):
+    try:
+        frame = _ws_encode(json.dumps(msg_dict))
+        with _ws_clients_lock:
+            clients = set(_ws_clients)
+        dead = set()
+        for sock in clients:
+            try:
+                sock.sendall(frame)
+            except Exception:
+                dead.add(sock)
+        if dead:
+            with _ws_clients_lock:
+                _ws_clients.difference_update(dead)
+            for s in dead:
+                try: s.close()
+                except Exception: pass
+    except Exception as e:
+        log.warning(f"[ws] failed to broadcast: {e}")
+
+
 def _ws_client_thread(sock, client_id: int = 0):
     sock.settimeout(60.0)
     try:
@@ -388,6 +409,17 @@ class _Handler(BaseHTTPRequestHandler):
                 log.exception("[text] /send_text handler crashed")
                 self._send_json(500, {"reply": f"❌ Server error: {e}"})
 
+        elif self.path == "/minimize":
+            try:
+                import subprocess
+                if IS_MAC:
+                    script = 'tell application "System Events" to tell process "Vani" to set value of attribute "AXMinimized" of window 1 to true'
+                    subprocess.run(["osascript", "-e", script])
+                self._send_json(200, {"success": True})
+            except Exception as e:
+                log.warning(f"Failed to minimize via AppleScript: {e}")
+                self._send_json(500, {"success": False, "error": str(e)})
+
         elif self.path == "/analyze_document":
             try:
                 import cgi
@@ -496,6 +528,45 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "reply": "Document memory clear ho gaya."})
             except Exception as e:
                 self._send_json(500, {"reply": f"❌ Clear error: {e}"})
+
+        elif self.path == "/wake_reset":
+            try:
+                from vani.memory.conversation_writer import clear_conversation
+                clear_conversation()
+                try:
+                    from vani.memory.human_memory import clear_active_document
+                    clear_active_document()
+                except Exception as e:
+                    log.warning(f"[wake_reset] clear active document failed: {e}")
+                try:
+                    from vani.memory.working_memory import clear_working_memory
+                    clear_working_memory()
+                except Exception as e:
+                    log.warning(f"[wake_reset] clear working memory failed: {e}")
+                try:
+                    from vani.memory.vector_store import SQLiteVectorStore
+                    store = SQLiteVectorStore()
+                    store.clear_all()
+                except Exception as e:
+                    log.warning(f"[wake_reset] clear semantic memories failed: {e}")
+                try:
+                    from vani.reasoning.worker import _get_task_queue
+                    q = _get_task_queue()
+                    if q:
+                        q.cancel_active_task_threadsafe()
+                except Exception as e:
+                    log.warning(f"[wake_reset] worker queue reset failed: {e}")
+                try:
+                    from vani.reasoning.worker import _session_ref, _session_loop
+                    if _session_ref and _session_loop:
+                        asyncio.run_coroutine_threadsafe(_session_ref.interrupt(), _session_loop)
+                except Exception as e:
+                    log.warning(f"[wake_reset] LiveKit session interrupt failed: {e}")
+                _ws_send_all({"action": "clear_chat"})
+                self._send_json(200, {"ok": True})
+            except Exception as e:
+                log.exception("[wake_reset] failed")
+                self._send_json(500, {"reply": f"❌ Wake reset error: {e}"})
 
         elif self.path == "/enroll_voice":
             try:
@@ -681,6 +752,41 @@ class _Handler(BaseHTTPRequestHandler):
                     })
                 except Exception as exc:
                     self._send_json(500, {"sessions_count": 0, "facts": {}, "last_5": [], "error": str(exc)})
+
+            elif self.path.startswith("/teach_signal.json"):
+                try:
+                    from vani.ui.teach_bridge import TEACH_SIGNAL_PATH
+                    if TEACH_SIGNAL_PATH.exists():
+                        body = TEACH_SIGNAL_PATH.read_bytes()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                except Exception:
+                    pass
+                self.send_response(404); self.end_headers()
+                return
+
+            elif self.path.startswith("/plugin_signal.json"):
+                try:
+                    from vani.config import PACKAGE_ROOT
+                    plugin_signal_path = PACKAGE_ROOT / "ui" / "plugin_signal.json"
+                    if plugin_signal_path.exists():
+                        body = plugin_signal_path.read_bytes()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                except Exception:
+                    pass
+                self.send_response(404); self.end_headers()
+                return
 
             elif self.path == "/ui":
                 html_file = HTML_PATH
@@ -1239,6 +1345,48 @@ async def entrypoint(ctx):
             )
 
     await ctx.connect()
+
+    # ── Speaker verification track listener ─────────────────────────────────────
+    import collections
+    session_audio_buffer = collections.deque(maxlen=150) # last ~4.5s of audio
+    session_audio_sr = 16000 # default
+
+    async def _read_audio_stream(track):
+        nonlocal session_audio_sr
+        from livekit import rtc
+        try:
+            stream = rtc.AudioStream(track)
+            async for frame_event in stream:
+                frame = frame_event.frame
+                session_audio_sr = frame.sample_rate
+                import numpy as np
+                if frame.data.itemsize == 2:
+                    pcm = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32) / 32768.0
+                elif frame.data.itemsize == 4:
+                    pcm = np.frombuffer(frame.data, dtype=np.float32)
+                else:
+                    pcm = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32) / 32768.0
+                
+                session_audio_buffer.append(pcm)
+        except Exception as exc:
+            log.warning(f"[SECURITY] _read_audio_stream failed: {exc}")
+
+    def _handle_track(track):
+        from livekit import rtc
+        kind_str = str(getattr(track, "kind", "")).lower()
+        if "audio" in kind_str or (hasattr(rtc, "TrackKind") and track.kind == rtc.TrackKind.KIND_AUDIO):
+            log.info(f"[SECURITY] Subscribed to audio track {track.sid} for speaker verification")
+            asyncio.create_task(_read_audio_stream(track))
+
+    @ctx.room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        _handle_track(track)
+
+    for participant in ctx.room.remote_participants.values():
+        for publication in participant.track_publications.values():
+            if publication.track:
+                _handle_track(publication.track)
+
     if os.getenv("VANI_PREWARM_OLLAMA", "0") == "1":
         asyncio.create_task(_prewarm_ollama())
 
@@ -1286,6 +1434,7 @@ async def entrypoint(ctx):
         @sess.on("user_started_speaking")
         def _on_user(*_):
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening..."))
+            session_audio_buffer.clear()
 
         @sess.on("user_stopped_speaking")
         def _on_stop2(*_):
@@ -1293,43 +1442,70 @@ async def entrypoint(ctx):
 
         @sess.on("user_input_transcribed")
         def _on_transcript(event, *_):
-            try:
-                text = getattr(event, "transcript", None) or getattr(event, "text", None) or ""
-                if not text:
-                    return
+            async def _async_transcript():
+                try:
+                    text = getattr(event, "transcript", None) or getattr(event, "text", None) or ""
+                    if not text:
+                        return
 
-                # ── Only act on FINAL transcripts ────────────────────────────
-                # LiveKit fires this event for both interim and final results.
-                # Interim transcripts (is_final=False) are used only for UI display,
-                # NOT for triggering commands — otherwise every partial result
-                # ("hlo", then "hlo hlo") fires a separate response, making
-                # Vani feel buggy and chatty.
-                is_final = getattr(event, "is_final", None)
-                if is_final is False:
-                    # Strictly interim — skip processing entirely
-                    return
-                # is_final is True or None (attribute absent = treat as final)
+                    is_final = getattr(event, "is_final", None)
+                    if is_final is False:
+                        # Strictly interim — skip processing entirely
+                        return
+                    # is_final is True or None (attribute absent = treat as final)
 
-                # ── Security lockdown intercept ───────────────────────────────
-                if SECURITY_ENABLED and is_locked_down():
-                    log.warning("[SECURITY] Lockdown active — intercepting transcript: %r", text)
-                    try:
-                        asyncio.create_task(sess.interrupt())
-                    except Exception:
-                        pass
-                    response = get_lockdown_response(text)
-                    if response:
-                        asyncio.create_task(_say_lockdown(sess, response))
-                    return
+                    # ── Speaker Verification Gate ─────────────────────────────────
+                    if SECURITY_ENABLED:
+                        from vani.audio.wake_verifier import is_verify_enabled
+                        if is_verify_enabled():
+                            import numpy as np
+                            wav = None
+                            if session_audio_buffer:
+                                wav = np.concatenate(list(session_audio_buffer))
+                            
+                            if wav is not None:
+                                from vani.audio.wake_verifier import verify_wake_audio_sync
+                                loop = asyncio.get_running_loop()
+                                accepted = await loop.run_in_executor(
+                                    None, verify_wake_audio_sync, wav, session_audio_sr
+                                )
+                                if not accepted:
+                                    log.warning("[SECURITY] Speaker verification failed during session turn!")
+                                    try:
+                                        await sess.interrupt()
+                                    except Exception:
+                                        pass
+                                    
+                                    activate_lockdown()
+                                    response = get_lockdown_response(text)
+                                    if response:
+                                        await _say_lockdown(sess, response)
+                                    return
+                                else:
+                                    if is_locked_down():
+                                        deactivate_lockdown()
 
-                # ── Dedup / repeated-word filter ──────────────────────────────
-                if _is_duplicate_utterance(text):
-                    try:
-                        asyncio.create_task(sess.interrupt())
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    # ── Security lockdown intercept ───────────────────────────────
+                    if SECURITY_ENABLED and is_locked_down():
+                        log.warning("[SECURITY] Lockdown active — intercepting transcript: %r", text)
+                        try:
+                            await sess.interrupt()
+                        except Exception:
+                            pass
+                        response = get_lockdown_response(text)
+                        if response:
+                            await _say_lockdown(sess, response)
+                        return
+
+                    # ── Dedup / repeated-word filter ──────────────────────────────
+                    if _is_duplicate_utterance(text):
+                        try:
+                            await sess.interrupt()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            asyncio.create_task(_async_transcript())
 
         async def _say_lockdown(session, text: str):
             try:
@@ -1340,20 +1516,13 @@ async def entrypoint(ctx):
                 log.warning("[SECURITY] _say_lockdown failed: %s", exc)
 
     def _new_agent_session():
-        try:
-            from livekit.agents import TurnHandlingOptions
-            turn_handling = TurnHandlingOptions(
-                allow_interruptions=True,
-                min_endpointing_delay=float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.12")),
-                max_endpointing_delay=float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "0.45")),
-            )
-            session_kwargs = {"turn_handling": turn_handling}
-        except ImportError:
-            session_kwargs = {
-                "allow_interruptions": True,
-                "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.12")),
-                "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "0.45")),
-            }
+        session_kwargs = {
+            "allow_interruptions": True,
+            "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.4")),
+            "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "1.0")),
+            "min_interruption_duration": float(os.getenv("VANI_INTERRUPT_MIN_DURATION", "0.3")),
+            "false_interruption_timeout": float(os.getenv("VANI_FALSE_INTERRUPT_TIMEOUT", "1.0")),
+        }
         if vad:
             session_kwargs["vad"] = vad
         return AgentSession(**session_kwargs)
@@ -1512,6 +1681,21 @@ def main():
     # ── P3: Start Tauri API server (port 8765) ────────────────────────────────
     _start_tauri_api_server()
     # ──────────────────────────────────────────────────────────────────────────
+
+    # Reset conversation, active document, working memory, and semantic memories on startup
+    try:
+        from vani.memory.conversation_writer import clear_conversation
+        clear_conversation()
+        from vani.memory.human_memory import clear_active_document
+        clear_active_document()
+        from vani.memory.working_memory import clear_working_memory
+        clear_working_memory()
+        from vani.memory.vector_store import SQLiteVectorStore
+        store = SQLiteVectorStore()
+        store.clear_all()
+        log.info("[startup] Memory reset successfully on startup")
+    except Exception as startup_reset_err:
+        log.warning(f"[startup] Memory reset on startup failed (non-fatal): {startup_reset_err}")
 
     # ── Phase 7: Start background workers ─────────────────────────────────────
     # Reminder checker, maintenance, and self-improvement run as daemon threads.

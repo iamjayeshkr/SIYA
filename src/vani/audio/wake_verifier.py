@@ -32,6 +32,7 @@ log = logging.getLogger("vani.wake_verifier")
 import os as _os
 
 # Master switch: VANI_SPEAKER_VERIFY=1 enables speaker verification.
+# Master switch: VANI_SPEAKER_VERIFY=1 enables speaker verification.
 VERIFY_ENABLED: bool = _os.getenv("VANI_SPEAKER_VERIFY", "0") == "1"
 
 # Dev bypass: VANI_SPEAKER_GATE=false skips verification even when VERIFY=1.
@@ -43,6 +44,32 @@ GATE_ENABLED: bool = _gate_raw not in ("false", "0", "no", "off")
 # Cosine similarity threshold.  Raised to 0.82 for strict speaker verification.
 # Lower to 0.70 in noisy conditions or if too many false rejections.
 THRESHOLD: float = float(_os.getenv("VANI_SPEAKER_THRESHOLD", "0.82"))
+
+
+def is_verify_enabled() -> bool:
+    """Check if speaker verification is active, reloading .env to pick up live updates."""
+    try:
+        import dotenv
+        from vani.config import PROJECT_ROOT
+        dotenv.load_dotenv(str(PROJECT_ROOT / ".env"), override=True)
+    except Exception:
+        pass
+    return _os.getenv("VANI_SPEAKER_VERIFY", "0") == "1"
+
+
+def is_gate_enabled() -> bool:
+    """Check if speaker verification gate is active."""
+    gate_raw = _os.getenv("VANI_SPEAKER_GATE", "true").strip().lower()
+    return gate_raw not in ("false", "0", "no", "off")
+
+
+def get_threshold() -> float:
+    """Get the current cosine similarity threshold."""
+    try:
+        return float(_os.getenv("VANI_SPEAKER_THRESHOLD", "0.82"))
+    except Exception:
+        return 0.82
+
 
 # ── Startup log ───────────────────────────────────────────────────────────────
 if VERIFY_ENABLED and GATE_ENABLED:
@@ -60,17 +87,19 @@ else:
 
 # ── Voiceprint cache ──────────────────────────────────────────────────────────
 # Loaded from disk on first verify call, then held in memory for the session.
+# Automatically reloads if the voiceprint file modification time changes.
 # A lock is used because the wake listener callback and async paths may race
 # on the first call.
 
 _voiceprint_cache: Optional[np.ndarray] = None
 _voiceprint_loaded: bool = False        # True after first load attempt (even if None)
 _voiceprint_lock = threading.Lock()
+_last_mtime: float = 0.0
 
 
 def _get_voiceprint() -> Optional[np.ndarray]:
     """
-    Return the cached voiceprint, loading from disk on first call.
+    Return the cached voiceprint, loading from disk on first call or when mtime changes.
 
     Returns None if:
       - Not enrolled (file doesn't exist)
@@ -79,30 +108,48 @@ def _get_voiceprint() -> Optional[np.ndarray]:
 
     Thread-safe. Never raises.
     """
-    global _voiceprint_cache, _voiceprint_loaded
+    global _voiceprint_cache, _voiceprint_loaded, _last_mtime
 
-    if _voiceprint_loaded:
-        return _voiceprint_cache
-
-    with _voiceprint_lock:
-        if _voiceprint_loaded:          # double-checked locking
-            return _voiceprint_cache
-
-        try:
-            from vani.services.voice_enrollment import load_voiceprint
-            _voiceprint_cache = load_voiceprint()
-            if _voiceprint_cache is not None:
-                log.info(
-                    "wake_verifier: voiceprint loaded from disk (shape=%s)",
-                    _voiceprint_cache.shape,
-                )
-            else:
-                log.info("wake_verifier: no enrolled voiceprint found — verify will fail open")
-        except Exception as exc:
-            log.warning("wake_verifier: could not load voiceprint: %s — failing open", exc)
+    from vani.services.voice_enrollment import VOICEPRINT_PATH
+    if not VOICEPRINT_PATH.exists():
+        with _voiceprint_lock:
             _voiceprint_cache = None
-        finally:
             _voiceprint_loaded = True
+            _last_mtime = 0.0
+        return None
+
+    try:
+        mtime = VOICEPRINT_PATH.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+
+    if not _voiceprint_loaded or mtime != _last_mtime:
+        with _voiceprint_lock:
+            # Double-checked locking
+            try:
+                mtime = VOICEPRINT_PATH.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+
+            if not _voiceprint_loaded or mtime != _last_mtime:
+                try:
+                    from vani.services.voice_enrollment import load_voiceprint
+                    _voiceprint_cache = load_voiceprint()
+                    _last_mtime = mtime
+                    if _voiceprint_cache is not None:
+                        log.info(
+                            "wake_verifier: voiceprint loaded from disk (shape=%s, mtime=%.1f)",
+                            _voiceprint_cache.shape,
+                            _last_mtime,
+                        )
+                    else:
+                        log.info("wake_verifier: no enrolled voiceprint found — verify will fail open")
+                except Exception as exc:
+                    log.warning("wake_verifier: could not load voiceprint: %s — failing open", exc)
+                    _voiceprint_cache = None
+                    _last_mtime = 0.0
+                finally:
+                    _voiceprint_loaded = True
 
     return _voiceprint_cache
 
@@ -116,10 +163,11 @@ def reload_voiceprint() -> None:
 
     Called by router._handle_voice_enroll() and router._handle_voice_delete().
     """
-    global _voiceprint_cache, _voiceprint_loaded
+    global _voiceprint_cache, _voiceprint_loaded, _last_mtime
     with _voiceprint_lock:
         _voiceprint_cache = None
         _voiceprint_loaded = False
+        _last_mtime = 0.0
     log.info("wake_verifier: voiceprint cache cleared — will reload on next verify")
 
 
@@ -139,12 +187,12 @@ def verify_wake_audio_sync(wav: np.ndarray, sr: int) -> bool:
 
     Never raises.
     """
-    # Fast path 1 — feature disabled entirely
-    if not VERIFY_ENABLED:
+    # Fast path 1 — feature disabled entirely (dynamic env check)
+    if not is_verify_enabled():
         return True
 
-    # Fast path 2 — dev bypass (VANI_SPEAKER_GATE=false)
-    if not GATE_ENABLED:
+    # Fast path 2 — dev bypass (VANI_SPEAKER_GATE=false) (dynamic env check)
+    if not is_gate_enabled():
         log.debug("wake_verifier: gate disabled via VANI_SPEAKER_GATE, bypassing verification")
         return True
 
@@ -157,14 +205,15 @@ def verify_wake_audio_sync(wav: np.ndarray, sr: int) -> bool:
             return True
 
         from vani.audio.speaker_encoder import get_encoder
-        result = get_encoder().verify(wav, sr, voiceprint, THRESHOLD)
+        threshold = get_threshold()
+        result = get_encoder().verify(wav, sr, voiceprint, threshold)
 
         if result:
-            log.debug("wake_verifier: accepted (similarity >= %.2f)", THRESHOLD)
+            log.debug("wake_verifier: accepted (similarity >= %.2f)", threshold)
         else:
             log.info(
                 "wake_verifier: rejected — speaker not recognised (similarity < %.2f)",
-                THRESHOLD,
+                threshold,
             )
         return result
 
@@ -191,11 +240,11 @@ async def verify_wake_audio_async(wav: np.ndarray, sr: int) -> bool:
     Never raises.
     """
     # Fast path 1 — feature disabled (before any await)
-    if not VERIFY_ENABLED:
+    if not is_verify_enabled():
         return True
 
     # Fast path 2 — dev bypass (before any await)
-    if not GATE_ENABLED:
+    if not is_gate_enabled():
         log.debug("wake_verifier: gate disabled via VANI_SPEAKER_GATE, bypassing verification")
         return True
 

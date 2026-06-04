@@ -159,6 +159,18 @@ _VOICE_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CLEAR_DOCUMENT_MEMORY_RE = re.compile(
+    r"(?:"
+    r"remove\s*(docx?|document|book|pdf)\s*(knowledge|memory)"
+    r"|delete\s*(docx?|document|book|pdf)\s*(knowledge|memory)"
+    r"|clear\s*(docx?|document|book|pdf)\s*(knowledge|memory)"
+    r"|document\s*(memory|knowledge)\s*(clear|remove|delete|reset)\s*(karo|kar|do)?"
+    r"|pdf\s*(memory|knowledge)\s*(clear|remove|delete|reset)\s*(karo|kar|do)?"
+    r"|docx?\s*(memory|knowledge)\s*(clear|remove|delete|reset)\s*(karo|kar|do)?"
+    r")",
+    re.IGNORECASE,
+)
+
 # ── Instagram intent patterns ─────────────────────────────────────────────────
 _INSTAGRAM_SEND_RE = re.compile(
     r"(?:"
@@ -241,7 +253,9 @@ def _router_classify(query: str):
     """
     try:
         from vani.router.intent_classifier import router_classify
-        return router_classify(query)
+        intent, data = router_classify(query)
+        if intent is not None:
+            return intent, data
     except ImportError:
         pass
 
@@ -256,6 +270,8 @@ def _router_classify(query: str):
         return "VOICE_STATUS", {}
     if _VOICE_ENROLL_RE.search(q):
         return "VOICE_ENROLL", {}
+    if _CLEAR_DOCUMENT_MEMORY_RE.search(q):
+        return "CLEAR_DOCUMENT_MEMORY", {}
 
     # Study mode intents
     if _STUDY_START_RE.search(q):
@@ -706,6 +722,10 @@ async def _dispatch_intent(intent: str, data, query: str) -> str:
         return await _handle_voice_delete()
     elif intent == "VOICE_STATUS":
         return await _handle_voice_status()
+    elif intent == "CLEAR_DOCUMENT_MEMORY":
+        from vani.memory.human_memory import clear_active_document
+        clear_active_document()
+        return "✅ Document memory clear ho gaya. Ab main isse nahi jaanta."
     elif intent == "INSTAGRAM_SEND":
         contact, message = data
         from vani.reasoning.tools.messaging import instagram_send

@@ -67,6 +67,7 @@ class PlannerBrain:
         Main entry point for the Worker Twin.
 
         Steps:
+          0. Plugins → Check if any enabled plugin matches the triggers first
           1. Plan  → TaskPlanner converts query to TaskPlan
           2. Check → if plan.requires_llm: return None (→ Qwen)
           3. Execute → executor runs each SubTask
@@ -75,6 +76,32 @@ class PlannerBrain:
         Never raises. Always returns str | None.
         """
         t_start = time.monotonic()
+
+        # ── Check if any enabled plugin matches the query triggers ────────────────
+        try:
+            from vani.plugins import get_registry
+            from vani.plugins.registry import PluginContext
+            
+            registry = get_registry()
+            messages = []
+            try:
+                from vani.reasoning.worker import _session_ref
+                if _session_ref and hasattr(_session_ref, "history") and hasattr(_session_ref.history, "items"):
+                    for item in list(_session_ref.history.items):
+                        role = "user" if item.role == "user" else "assistant"
+                        content = getattr(item, "text", "") or ""
+                        if content:
+                            messages.append({"role": role, "content": content})
+            except Exception:
+                pass
+
+            context = PluginContext(recent_messages=messages)
+            plugin_result = await registry.route_to_plugin(query, context)
+            if plugin_result is not None:
+                logger.info(f"[BRAIN] Plugin matched and executed: message='{plugin_result.message}'")
+                return plugin_result.message
+        except Exception as e:
+            logger.warning(f"[BRAIN] Dynamic plugin routing failed: {e}")
 
         try:
             planner = _get_planner()

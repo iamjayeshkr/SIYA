@@ -1,28 +1,22 @@
 """
-vani/agents/browser_agent.py — Phase 3
+vani/agents/browser_agent.py — Evolved Browser Agent
 
-Handles all browser-domain intents:
-  web search, URL navigation, tab control, YouTube playback/control.
-
-Wraps:
-  - browser/search.py     → google_search
-  - reasoning/tools/apps  → open_url, open_url_in_browser, open_youtube_and_play,
-                             close_active_tab, next_tab, previous_tab
-  - reasoning/tools/youtube → youtube_control
-  - reasoning/screen      → browser-context screen reads (delegated via router)
-
-Phase 3: delegates to _dispatch_intent (existing router) — zero behavior change.
-Future:  add caching for repeated searches, smart tab management, history context.
+Handles all browser-domain tasks statefully:
+  web search, URL navigation, tab control, YouTube playback, and semantic crawling.
 """
 
 from __future__ import annotations
 
+from typing import Any
 from vani.agents.base_agent import BaseAgent
 
 
 class BrowserAgent(BaseAgent):
     name = "browser"
-    description = "Web search, URL navigation, browser tab control, YouTube playback"
+    description = (
+        "Handles web search, website crawling, tab navigation, and YouTube playback. "
+        "Can crawl websites using crawl_url to save page content to memory for semantic Q&A."
+    )
     owned_tools = [
         "google_search",
         "open_url",
@@ -36,17 +30,59 @@ class BrowserAgent(BaseAgent):
         "next_tab",
         "previous_tab",
         "app_search",
+        "crawl_url",
     ]
 
-    async def handle(self, intent: str, data, query: str) -> str:
+    def __init__(self) -> None:
+        super().__init__()
+        # Dynamically register the crawl_url tool at initialization
+        try:
+            from vani.reasoning.registry import register_tool
+            register_tool(
+                "crawl_url",
+                self.crawl_url,
+                "crawl_url(url) - Web page content read karo (convert to markdown and clean HTML boilerplate)"
+            )
+        except Exception as e:
+            self.logger.warning(f"Could not register crawl_url dynamically: {e}")
+
+    async def crawl_url(self, url: str) -> str:
         """
-        Route browser intents through the existing deterministic dispatcher.
+        Crawl a webpage, clean HTML structures, convert to Markdown, and 
+        index chunks inside Vani's local vector store for semantic context retrieval.
+        """
+        from vani.browser.crawler import fetch_and_clean_webpage, chunk_markdown
+        self.logger.info(f"Starting crawl for target URL: {url}")
+        
+        cleaned_markdown = await fetch_and_clean_webpage(url)
+        if not cleaned_markdown:
+            return "❌ URL fetch failed. Could not retrieve text content from webpage."
 
-        Intents handled:
-          GOOGLE_SEARCH, OPEN_URL, BROWSER_TAB_*, YOUTUBE_PLAY, YOUTUBE_CONTROL,
-          APP_SEARCH, BROWSER_CONTROL_*
+        # Chunk the markdown content for retrieval
+        chunks = chunk_markdown(cleaned_markdown, chunk_size=1200, overlap=150)
+        
+        # Index chunks in our local SQLite Vector Store
+        try:
+            from vani.memory.vector_store import SQLiteVectorStore
+            store = SQLiteVectorStore()
+            for idx, chunk in enumerate(chunks):
+                await store.add_memory(
+                    chunk,
+                    {"source": "web_crawl", "url": url, "chunk_index": idx}
+                )
+            self.logger.info(f"Indexed {len(chunks)} page chunks into vector database successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to index crawled page chunks into database: {e}")
 
-        Falls through to _dispatch_intent — identical behavior to pre-Phase-3.
+        # Return a text preview for immediate thinking context
+        preview = cleaned_markdown[:1500]
+        if len(cleaned_markdown) > 1500:
+            preview += "\n\n... [remaining content indexed in local vector memory for Q&A] ..."
+        return f"✅ Content crawled successfully:\n\n{preview}"
+
+    async def handle(self, intent: str, data: Any, query: str) -> str:
+        """
+        Legacy entry point: routes browser intents directly to dispatcher.
         """
         from vani.reasoning.router import _dispatch_intent
         return await _dispatch_intent(intent, data, query)

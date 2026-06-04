@@ -225,6 +225,13 @@ fn hide_to_tray(app: AppHandle, state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+fn minimize_window(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.minimize();
+    }
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle, state: State<'_, AppState>) {
     {
         let s = state.lock().unwrap();
@@ -654,6 +661,7 @@ fn main() {
             get_persisted_state,
             update_persisted_state,
             get_wake_status,
+            minimize_window,
         ])
         .run(tauri::generate_context!())
         .expect("error running Vani");

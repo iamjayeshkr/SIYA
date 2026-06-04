@@ -30,7 +30,7 @@ class WhiteboardPlugin(VaniPlugin):
     icon = "🎨"
     description = "Opens an interactive whiteboard in your browser for visual explanations."
     category = "visual"
-    enabled = False
+    enabled = True
     triggers = [
         "whiteboard", "paint karo", "draw karo", "sketch karo",
         "drawing board", "canvas kholo", "sketchpad", "paint",

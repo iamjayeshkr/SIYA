@@ -354,7 +354,17 @@ async def google_search(query: str) -> str:
     - "Kaise karte hain web scraping"      ← FIX 2: now routed here correctly
     - "batao latest IPL results"           ← FIX 2: now routed here correctly
     """
-    raw_query = query
+    raw_query = query.strip()
+
+    # ── Check search_cache first ──
+    try:
+        from vani.core.cache import search_cache
+        cached_result = search_cache.get(raw_query)
+        if cached_result:
+            logger.info("Search cache hit for query: %s", raw_query)
+            return cached_result
+    except Exception as exc:
+        logger.warning("Could not access search cache: %s", exc)
 
     # ── Step 0: Google site: operator  (e.g. "site:bceg.com on google") ────────
     # Must be checked BEFORE _extract_site_search() which would otherwise
@@ -366,7 +376,12 @@ async def google_search(query: str) -> str:
         search_engine_id = os.getenv("SEARCH_ENGINE_ID")
         if not api_key or not search_engine_id:
             _open_google_fallback(clean_q)
-            return f"✅ Google search browser mein khul gaya: {clean_q}"
+            res = f"✅ Google search browser mein khul gaya: {clean_q}"
+            try:
+                search_cache.set(raw_query, res, ttl_seconds=3600)
+            except Exception:
+                pass
+            return res
         try:
             response = requests.get(
                 "https://www.googleapis.com/customsearch/v1",
@@ -374,11 +389,21 @@ async def google_search(query: str) -> str:
                 timeout=10,
             )
             if response.status_code == 200:
-                return _format_results(response.json().get("items", []))
+                res = _format_results(response.json().get("items", []))
+                try:
+                    search_cache.set(raw_query, res, ttl_seconds=3600)
+                except Exception:
+                    pass
+                return res
         except Exception as exc:
             logger.warning("site: operator search API failed: %s", exc)
         _open_google_fallback(clean_q)
-        return f"✅ Google search browser mein khul gaya: {clean_q}"
+        res = f"✅ Google search browser mein khul gaya: {clean_q}"
+        try:
+            search_cache.set(raw_query, res, ttl_seconds=3600)
+        except Exception:
+            pass
+        return res
 
     # ── Step 1: site-specific routing ──────────────────────────────────────
     site_result = _extract_site_search(raw_query)
@@ -388,7 +413,12 @@ async def google_search(query: str) -> str:
         logger.info("Site-specific search → domain=%s  query=%s", domain, q)
         url = _site_search_url(domain, q)
         _open_default(url)
-        return f"✅ '{q}' ko {domain} par search kar diya. Browser mein result khul gaya."
+        res = f"✅ '{q}' ko {domain} par search kar diya. Browser mein result khul gaya."
+        try:
+            search_cache.set(raw_query, res, ttl_seconds=3600)
+        except Exception:
+            pass
+        return res
 
     # ── Step 2: clean & classify ────────────────────────────────────────────
     cleaned = _clean_query(raw_query)
@@ -417,7 +447,12 @@ async def google_search(query: str) -> str:
 
     if not api_key or not search_engine_id:
         _open_google_fallback(enriched)
-        return f"✅ Google search default browser mein khul gaya: {cleaned}"
+        res = f"✅ Google search default browser mein khul gaya: {cleaned}"
+        try:
+            search_cache.set(raw_query, res, ttl_seconds=3600)
+        except Exception:
+            pass
+        return res
 
     try:
         response = requests.get(
@@ -428,14 +463,29 @@ async def google_search(query: str) -> str:
     except requests.exceptions.RequestException as exc:
         logger.warning("Google Search API failed; opening browser fallback: %s", exc)
         _open_google_fallback(enriched)
-        return f"✅ Google search browser mein khul gaya: {cleaned}"
+        res = f"✅ Google search browser mein khul gaya: {cleaned}"
+        try:
+            search_cache.set(raw_query, res, ttl_seconds=3600)
+        except Exception:
+            pass
+        return res
 
     if response.status_code != 200:
         logger.warning("Google Search API returned %s; opening browser fallback", response.status_code)
         _open_google_fallback(enriched)
-        return f"✅ Google search browser mein khul gaya: {cleaned}"
+        res = f"✅ Google search browser mein khul gaya: {cleaned}"
+        try:
+            search_cache.set(raw_query, res, ttl_seconds=3600)
+        except Exception:
+            pass
+        return res
 
-    return _format_results(response.json().get("items", []))
+    res = _format_results(response.json().get("items", []))
+    try:
+        search_cache.set(raw_query, res, ttl_seconds=3600)
+    except Exception:
+        pass
+    return res
 
 
 # ---------------------------------------------------------------------------

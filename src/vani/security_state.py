@@ -228,3 +228,216 @@ def get_deflect_response() -> str:
     if not current_q:
         return LOCKDOWN_CLOSING
     return DEFLECT_TEMPLATE.format(question=current_q)
+
+
+# ── Phase 8: Tool Safety Classifications & Gates ─────────────────────────────
+
+import json
+import time
+import re
+import sys
+from vani.config import PROJECT_ROOT
+
+# Safe: Read-only, simple computations, status checks
+SAFE_TOOLS = {
+    "google_search", "get_weather", "read_screen", "study_status",
+    "talking_tom_control", "media_control", "youtube_control",
+    "notifications_read", "whatsapp_read", "telegram_read",
+    "fetch_stock_price", "sip_calculator", "calculate_emi",
+    "tax_slab_info", "investment_compare", "compliance_calendar",
+    "financial_ratio_explain", "close_active_tab", "next_tab", "previous_tab",
+    "switch_tab_by_name", "close_tab_by_name", "close_all_tabs_by_name",
+}
+
+# Confirm Required: Modifies state, opens app, sends messages, browser crawls
+CONFIRM_REQUIRED_TOOLS = {
+    "whatsapp_send", "whatsapp_call", "telegram_send", "save_note",
+    "write_code_to_file", "open_application", "close_application",
+    "switch_application", "open_url", "open_youtube_and_play",
+    "open_url_in_browser", "open_app_smart", "control_volume_tool",
+    "move_cursor_tool", "mouse_click_tool", "scroll_cursor_tool",
+    "type_text_tool", "press_key_tool", "press_hotkey_tool",
+    "swipe_gesture_tool", "start_study_session", "end_study_session",
+    "crawl_url", "whatsapp_open_chat", "whatsapp_shortcut", "telegram_chats"
+}
+
+# Sandboxed: Dangerous file execution, shell actions, or arbitrary code
+SANDBOXED_TOOLS = {
+    "code_assist", "folder_file", "Play_file", "app_search"
+}
+
+# Global approved tool calls dictionary: key: (tool_name, json_args_str) -> status
+_tool_approvals: dict[tuple[str, str], bool] = {}
+_approval_lock = threading.Lock()
+
+
+class ToolPermissionGate:
+    """
+    Validates tool permissions based on classification level:
+    - SAFE: Executes immediately.
+    - CONFIRM_REQUIRED: Requires voice or environment authorization.
+    - SANDBOXED: Requires strict confirmation.
+    """
+
+    @staticmethod
+    def classify_tool(tool_name: str) -> str:
+        if tool_name in SAFE_TOOLS:
+            return "SAFE"
+        elif tool_name in CONFIRM_REQUIRED_TOOLS:
+            return "CONFIRM_REQUIRED"
+        elif tool_name in SANDBOXED_TOOLS:
+            return "SANDBOXED"
+        # Default safety: anything unrecognized is CONFIRM_REQUIRED
+        return "CONFIRM_REQUIRED"
+
+    @staticmethod
+    def approve_tool_execution(tool_name: str, args: dict) -> None:
+        """Approve a specific tool execution with given arguments."""
+        with _approval_lock:
+            key = (tool_name, json.dumps(args, sort_keys=True))
+            _tool_approvals[key] = True
+
+    @staticmethod
+    def clear_approvals() -> None:
+        """Clear all pending/approved tool executions."""
+        with _approval_lock:
+            _tool_approvals.clear()
+
+    @staticmethod
+    def is_approved(tool_name: str, args: dict) -> bool:
+        """Check if a tool execution is approved."""
+        # Auto-approve if specified by environment (e.g. for testing)
+        if os.getenv("VANI_AUTO_APPROVE_TOOLS", "0") == "1":
+            return True
+            
+        with _approval_lock:
+            key = (tool_name, json.dumps(args, sort_keys=True))
+            return _tool_approvals.get(key, False)
+
+    @classmethod
+    def check_permission(cls, tool_name: str, args: dict) -> tuple[bool, str]:
+        """
+        Check if the tool execution is permitted.
+        Returns:
+            (is_permitted, action_required_description)
+        """
+        # If lockdown is active, reject EVERYTHING
+        if is_locked_down():
+            return False, "REJECTED_LOCKDOWN"
+
+        level = cls.classify_tool(tool_name)
+        if level == "SAFE":
+            return True, "SAFE"
+
+        if cls.is_approved(tool_name, args):
+            return True, f"APPROVED_{level}"
+
+        # Otherwise, requires confirmation
+        return False, f"REQUIRES_CONFIRMATION_{level}"
+
+
+# ── Phase 8: Log Scrubbing and Auditing ──────────────────────────────────────
+
+def scrub_secrets(data: Any) -> Any:
+    """
+    Recursively scrub sensitive keys and values from strings/dicts/lists.
+    """
+    sensitive_keys = {
+        "key", "api", "token", "password", "secret", "auth", "pwd", "credential"
+    }
+    
+    # Fetch actual env secrets to do literal search-and-replace
+    env_secrets = []
+    for k, v in os.environ.items():
+        if any(sk in k.lower() for sk in sensitive_keys) and len(v) > 4:
+            env_secrets.append(v)
+
+    def _scrub_val(val: Any) -> Any:
+        if isinstance(val, str):
+            scrubbed = val
+            for secret in env_secrets:
+                scrubbed = scrubbed.replace(secret, "[SCRUBBED]")
+            # Regex patterns for keys, tokens, etc.
+            scrubbed = re.sub(r"(?i)\b(api_?key|password|secret|token)\b\s*[:=]\s*['\"][^'\"]+['\"]", r"\1: '[SCRUBBED]'", scrubbed)
+            return scrubbed
+        elif isinstance(val, dict):
+            new_dict = {}
+            for k, v in val.items():
+                if any(sk in k.lower() for sk in sensitive_keys):
+                    new_dict[k] = "[SCRUBBED]"
+                else:
+                    new_dict[k] = _scrub_val(v)
+            return new_dict
+        elif isinstance(val, list):
+            return [_scrub_val(item) for item in val]
+        return val
+
+    return _scrub_val(data)
+
+
+class AuditLogger:
+    """Logs agent actions, tool executions, and security validations to audit_log.jsonl."""
+
+    @staticmethod
+    def log_entry(agent: str, action_type: str, action_name: str, args: dict | Any, status: str, error: Optional[str] = None) -> None:
+        try:
+            log_dir = PROJECT_ROOT / "conversations"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "audit_log.jsonl"
+            
+            clean_args = scrub_secrets(args)
+            
+            entry = {
+                "timestamp": time.time(),
+                "agent": agent,
+                "action_type": action_type,    # e.g. "tool", "delegate", "agent_run"
+                "action_name": action_name,    # e.g. "google_search", "run"
+                "arguments": clean_args,
+                "status": status,              # e.g. "success", "failed", "requires_confirm", "blocked"
+                "error": error
+            }
+            
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"Error writing to audit log: {e}", file=sys.stderr)
+
+
+# ── Phase 8: Environment Secret Validation ───────────────────────────────────
+
+def validate_environment() -> dict[str, str]:
+    """
+    Validate environment variables and return a dictionary of validation issues (if any).
+    Checks formatting, completeness, and safety constraints.
+    """
+    issues = {}
+    
+    # 1. Check Ollama url
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    if not (ollama_url.startswith("http://") or ollama_url.startswith("https://")):
+        issues["OLLAMA_URL"] = f"Invalid URL format: {ollama_url}"
+        
+    # 2. Check threshold
+    threshold_str = os.getenv("VANI_SPEAKER_THRESHOLD", "0.82")
+    try:
+        val = float(threshold_str)
+        if not (0.0 <= val <= 1.0):
+            issues["VANI_SPEAKER_THRESHOLD"] = f"Value must be between 0.0 and 1.0: {threshold_str}"
+    except ValueError:
+        issues["VANI_SPEAKER_THRESHOLD"] = f"Invalid float value: {threshold_str}"
+        
+    # 3. Check Speaker Verify settings
+    verify_enabled = os.getenv("VANI_SPEAKER_VERIFY", "0")
+    if verify_enabled not in ("0", "1"):
+        issues["VANI_SPEAKER_VERIFY"] = f"Must be '0' or '1': {verify_enabled}"
+        
+    if issues:
+        log.warning("Environment validation found issues: %s", issues)
+    else:
+        log.info("Environment validation passed successfully.")
+        
+    return issues
+
+
+# Validate environment automatically on module load
+validate_environment()

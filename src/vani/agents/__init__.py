@@ -54,6 +54,7 @@ def _build_registry() -> dict[str, "BaseAgent"]:
         ("vani.agents.automation_agent",    "AutomationAgent",    "automation"),
         ("vani.agents.memory_agent",        "MemoryAgent",        "memory"),
         ("vani.agents.learning_agent",      "LearningAgent",      "learning"),
+        ("vani.agents.finance_agent",       "FinanceAgent",       "finance"),
     ]
     for module_path, class_name, key in _agent_classes:
         try:
@@ -64,6 +65,14 @@ def _build_registry() -> dict[str, "BaseAgent"]:
             logger.debug(f"[AGENTS] Registered: {key} ({class_name})")
         except Exception as e:
             logger.error(f"[AGENTS] Failed to load {class_name} from {module_path}: {e}")
+            
+    # Bootstrap specialized Domain Modules
+    try:
+        from vani.domains.manager import DomainManager
+        DomainManager.load_domains()
+    except Exception as e:
+        logger.error(f"[AGENTS] Failed to load Domain Modules: {e}")
+        
     return registry
 
 
@@ -155,6 +164,7 @@ def get_agent_for_intent(intent: str) -> "BaseAgent | None":
         ("SAVE_NOTE",        "file"),
         ("STUDY_",           "automation"),
         ("REMINDER_",        "automation"),
+        ("FINANCE_",         "finance"),
     ]
     intent_upper = (intent or "").upper()
     for prefix, agent_key in _INTENT_PREFIX_MAP:
