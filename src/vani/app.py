@@ -252,6 +252,12 @@ def _ws_client_thread(sock, client_id: int = 0):
         log.debug(f"[WS] client-{client_id} disconnected")
 
 
+_recently_spoken_fallback_texts = set()
+
+def mark_fallback_speech(text: str):
+    _recently_spoken_fallback_texts.add(text.strip())
+
+
 def _patched_state_update(new_values: dict):
     state.update(new_values)
     _ws_push_state()
@@ -973,7 +979,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_response(404); self.end_headers()
                 return
 
-            elif self.path == "/ui":
+            elif self.path in ("/", "/ui"):
                 html_file = HTML_PATH
                 if PATCHED_HTML_PATH.exists() and PATCHED_HTML_PATH.stat().st_mtime >= HTML_PATH.stat().st_mtime:
                     html_file = PATCHED_HTML_PATH
@@ -1064,230 +1070,7 @@ def _run_state_server():
 # The Tauri Rust layer talks to Python via HTTP on port 8765.
 # All endpoints are non-blocking and safe to call from a Rust async task.
 
-def _start_tauri_api_server():
-    """Start the FastAPI/uvicorn server for Tauri IPC on port 8765.
-    Runs in a background daemon thread so it never blocks the main loop."""
-    try:
-        import uvicorn
-        from fastapi import FastAPI
-        from fastapi.middleware.cors import CORSMiddleware
-
-        tauri_api = FastAPI(title="Vani Tauri API", version="0.1.0")
-        tauri_api.add_middleware(
-            CORSMiddleware,
-            allow_origins=["tauri://localhost", "http://localhost:1420"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-
-        # ── /query — main chat endpoint ───────────────────────────────────────
-        @tauri_api.post("/query")
-        async def tauri_query(body: dict):
-            """Route a text query through Vani's existing reasoning stack."""
-            text = body.get("text", "").strip()
-            if not text:
-                return {"text": "", "model_used": "", "duration_ms": 0, "tool_calls": []}
-            import time as _time
-            t0 = _time.monotonic()
-            try:
-                from vani.services.text_chat import handle_text_command
-                reply = await handle_text_command(text)
-            except Exception as e:
-                log.warning(f"[tauri_api] /query error: {e}")
-                reply = f"Error: {e}"
-            duration_ms = int((_time.monotonic() - t0) * 1000)
-            return {
-                "text": reply,
-                "model_used": os.getenv("PREFERRED_MODEL", "unknown"),
-                "duration_ms": duration_ms,
-                "tool_calls": [],
-            }
-
-        # ── /memory/stats — memory summary ───────────────────────────────────
-        @tauri_api.get("/memory/stats")
-        async def tauri_memory_stats():
-            """Return semantic memory + working memory counts."""
-            try:
-                from vani.memory.working_memory import WorkingMemory
-                wm = WorkingMemory()
-                working_entries = len(wm.get_all()) if hasattr(wm, "get_all") else 0
-            except Exception:
-                working_entries = 0
-            try:
-                from vani.vani_legacy.db import get_memory_count
-                semantic_memories = get_memory_count()
-            except Exception:
-                semantic_memories = 0
-            return {
-                "semantic_memories": semantic_memories,
-                "working_entries": working_entries,
-                "has_permanent": semantic_memories > 0,
-            }
-
-        # ── /memory/search — semantic search ─────────────────────────────────
-        @tauri_api.post("/memory/search")
-        async def tauri_memory_search(body: dict):
-            """Search semantic memory and return ranked results."""
-            query = body.get("query", "").strip()
-            top_k = int(body.get("top_k", 10))
-            if not query:
-                return []
-            try:
-                from vani.vani_legacy.memory_semantic import SemanticMemory
-                sem = SemanticMemory()
-                results = await sem.search(query, top_k=top_k)
-                return results
-            except Exception as e:
-                log.warning(f"[tauri_api] /memory/search error: {e}")
-                return []
-
-        # ── /tools/history — tool audit log ──────────────────────────────────
-        @tauri_api.get("/tools/history")
-        async def tauri_tool_history(tool: str = None):
-            """Return recent tool calls from the audit log."""
-            try:
-                from vani.vani_legacy.db import get_tool_audit_log
-                rows = get_tool_audit_log(tool_name=tool, limit=50)
-                return rows
-            except Exception as e:
-                log.warning(f"[tauri_api] /tools/history error: {e}")
-                return []
-
-        # ── /models/status — model router health ─────────────────────────────
-        @tauri_api.get("/models/status")
-        async def tauri_model_status():
-            """Return health status of all models in the fallback chain."""
-            try:
-                from vani.vani_legacy.model_router import model_router as _mr
-                return _mr.status()
-            except Exception as e:
-                log.warning(f"[tauri_api] /models/status error: {e}")
-                # Fallback: probe Ollama directly
-                models = {}
-                try:
-                    import requests as _req
-                    r = _req.get("http://127.0.0.1:11434/api/tags", timeout=2)
-                    if r.ok:
-                        for m in r.json().get("models", []):
-                            name = m.get("name", "").split(":")[0]
-                            models[name] = {"healthy": True, "provider": "ollama", "tier": "medium"}
-                except Exception:
-                    pass
-                return models
-
-        # ── /state — mirror existing state dict ──────────────────────────────
-        @tauri_api.get("/state")
-        async def tauri_get_state():
-            return state
-
-        # ── P4: SSE streaming endpoint ────────────────────────────────────
-        from fastapi.responses import StreamingResponse as _StreamingResponse
-
-        @tauri_api.get("/stream")
-        async def tauri_stream(text: str = ""):
-            """
-            P4: Token-streaming endpoint. Returns text/event-stream (SSE).
-            Rust reads this with reqwest streaming and emits events to React.
-            React appends tokens to the chat bubble in real time.
-            """
-            text = text.strip()
-            if not text:
-                async def _empty():
-                    import json as _json
-                    yield f'data: {_json.dumps({"token": "", "done": True, "full_text": ""})}\'\n\n'
-                return _StreamingResponse(_empty(), media_type="text/event-stream")
-
-            async def _generate():
-                try:
-                    from vani.vani_legacy.p4_streaming import sse_stream_generator
-                    import os as _os
-                    model = _os.getenv("PREFERRED_MODEL", "qwen2.5:7b")
-                    async for chunk in sse_stream_generator(text, model=model):
-                        yield chunk
-                except Exception as e:
-                    import json as _json
-                    log.warning(f"[tauri_api] /stream error: {e}")
-                    try:
-                        from vani.services.text_chat import handle_text_command
-                        reply = await handle_text_command(text)
-                    except Exception:
-                        reply = f"Error: {e}"
-                    yield f'data: {_json.dumps({"token": reply, "done": False})}\'\n\n'
-                    yield f'data: {_json.dumps({"token": "", "done": True, "full_text": reply})}\'\n\n'
-
-            return _StreamingResponse(
-                _generate(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-
-        # ── P4: Wake word endpoints ───────────────────────────────────────
-
-        @tauri_api.get("/wake/status")
-        async def wake_status():
-            try:
-                from vani.vani_legacy.p4_wake_word import wake_word_controller
-                return wake_word_controller.status()
-            except Exception as e:
-                return {"enabled": False, "error": str(e)}
-
-        @tauri_api.post("/wake/trigger")
-        async def wake_trigger(body: dict):
-            try:
-                from vani.vani_legacy.p4_wake_word import wake_word_controller
-                confidence = float(body.get("confidence", 1.0))
-                result = wake_word_controller.trigger(confidence)
-                if result["acted"]:
-                    _patched_state_update({"listening": True})
-                return result
-            except Exception as e:
-                return {"acted": False, "reason": str(e)}
-
-        @tauri_api.post("/wake/set_enabled")
-        async def wake_set_enabled(body: dict):
-            try:
-                from vani.vani_legacy.p4_wake_word import wake_word_controller
-                enabled = bool(body.get("enabled", True))
-                wake_word_controller.set_enabled(enabled)
-                return {"enabled": enabled}
-            except Exception as e:
-                return {"error": str(e)}
-
-        # ── P4: Persistent state endpoint ────────────────────────────────
-
-        @tauri_api.get("/p4/state")
-        async def p4_get_state():
-            try:
-                from vani.vani_legacy.p4_state import tray_state_manager
-                return tray_state_manager.state.to_dict()
-            except Exception as e:
-                return {"error": str(e)}
-
-        def _run():
-            config = uvicorn.Config(
-                tauri_api,
-                host="127.0.0.1",
-                port=8765,
-                loop="asyncio",
-                log_level="warning",
-                access_log=False,
-            )
-            server = uvicorn.Server(config)
-            import asyncio as _asyncio
-            _loop = _asyncio.new_event_loop()
-            _asyncio.set_event_loop(_loop)
-            _loop.run_until_complete(server.serve())
-
-        t = threading.Thread(target=_run, daemon=True, name="tauri-api")
-        t.start()
-        log.info("[tauri_api] FastAPI server started on http://127.0.0.1:8765")
-    except ImportError as e:
-        log.warning(
-            f"[tauri_api] fastapi/uvicorn not installed — Tauri IPC disabled: {e}\n"
-            "  Install with: pip install fastapi uvicorn"
-        )
-    except Exception as e:
-        log.warning(f"[tauri_api] Failed to start Tauri API server (non-fatal): {e}")
+# Tauri API server removed
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -1373,55 +1156,31 @@ def _patch_html(lk_url: str = "", token: str = "", voice_backend: str = "none") 
 
 
 def _open_ui(html_path: Path):
-    url = "http://127.0.0.1:5500/ui"
-    # ── Phase 9: Use platform adapter when available ───────────────────────────
-    if _PLATFORM_ADAPTER_OK:
-        try:
-            pass  # Tauri handles the window
-            log.info(f"[ui] Opened via platform adapter ({_platform_adapter.name})")
-            return
-        except Exception as _e:
-            log.warning(f"[ui] Platform adapter open_app_browser failed: {_e}")
-    # ── Legacy fallback (original Mac/Win/else logic) ──────────────────────────
-    if IS_MAC:
-        for chrome in [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        ]:
-            if os.path.exists(chrome):
-                subprocess.Popen([chrome, f"--app={url}",
-                    "--window-size=420,680", "--window-position=50,50",
-                    "--disable-extensions", "--no-first-run", "--no-default-browser-check"])
-                log.info("[ui] Opened with Chrome app mode OK")
-                return
-        pass  # Tauri handles the window
-    elif IS_WIN:
-        for chrome in [
-            os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
-            os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-        ]:
-            if os.path.exists(chrome):
-                subprocess.Popen([chrome, f"--app={url}", "--window-size=420,680"])
-                return
-        pass  # Tauri handles the window
-    else:
-        pass  # Tauri handles the window
+    import webbrowser
+    webbrowser.open(f"http://127.0.0.1:5500/")
+    log.info("[UI] Opened browser at http://127.0.0.1:5500/")
 
 
 # ── Module-level entrypoint ───────────────────────────────────────────────────
 
 async def entrypoint(ctx):
+    # Pre-warm Kokoro so first reply has no model-load delay
+    try:
+        from vani.audio.kokoro_tts import _load_kokoro
+        _load_kokoro()
+    except Exception:
+        pass
+
     from livekit.agents import AgentSession, Agent
     # ── FIX 6: RoomInputOptions import guarded — set to None if unavailable ───
     # Original code imported this at entrypoint top and used it unchecked below.
     # If the import fails, the later RoomInputOptions(noise_cancellation=nc) call
     # would raise UnboundLocalError. Now None-checked before use.
     try:
-        from livekit.agents import RoomInputOptions
+        from livekit.agents import RoomInputOptions, RoomOutputOptions
     except ImportError:
         RoomInputOptions = None
+        RoomOutputOptions = None
 
     from livekit.plugins import google
     try:
@@ -1527,7 +1286,7 @@ async def entrypoint(ctx):
                     voice="Aoede",
                     temperature=float(os.getenv("VANI_REALTIME_TEMPERATURE", "0.65")),
                     instructions=realtime_prompt,
-                    modalities=["AUDIO"],
+                    modalities=["AUDIO"],            # ← Gemini returns audio, but agent session output track publishing will be disabled
                 ),
                 tools=[get_thinking_capability_tool()],
             )
@@ -1633,6 +1392,11 @@ async def entrypoint(ctx):
 
         @sess.on("user_started_speaking")
         def _on_user(*_):
+            try:
+                from vani.audio.kokoro_tts import stop_playback
+                stop_playback()              # ADD THIS — stops Kokoro mid-sentence
+            except Exception:
+                pass
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             session_audio_buffer.clear()
             try:
@@ -1652,10 +1416,12 @@ async def entrypoint(ctx):
         @sess.on("conversation_item_added")
         def _on_item(item, *_):
             try:
+                from vani.reasoning.worker import say_to_user
                 role = getattr(item, "role", "")
                 text = getattr(item, "text", "") or getattr(item, "text_content", "") or ""
                 if text and role in ("assistant", "agent"):
                     _patched_state_update(dict(transcript=text))
+                    asyncio.create_task(say_to_user(text))   # ADD THIS
             except Exception:
                 pass
 
@@ -1768,10 +1534,20 @@ async def entrypoint(ctx):
                     log.warning(f"[nc] Noise cancellation setup failed: {e}")
                     room_input = None
 
+            room_output = None
+            if RoomOutputOptions is not None:
+                room_output = RoomOutputOptions(audio_enabled=True)
+
+            kwargs = {}
+            if room_input:
+                kwargs["room_input_options"] = room_input
+            if room_output:
+                kwargs["room_output_options"] = room_output
+
             await session.start(
                 room=ctx.room,
                 agent=Assistant(),
-                **({"room_input_options": room_input} if room_input else {}),
+                **kwargs,
             )
             connected = True
             log.info("[vani] realtime session started OK")
@@ -1898,9 +1674,7 @@ def main():
 
     threading.Thread(target=_run_state_server, daemon=True).start()
 
-    # ── P3: Start Tauri API server (port 8765) ────────────────────────────────
-    _start_tauri_api_server()
-    # ──────────────────────────────────────────────────────────────────────────
+    # Tauri API server removed
 
     # Reset conversation, active document, working memory, and semantic memories on startup
     try:

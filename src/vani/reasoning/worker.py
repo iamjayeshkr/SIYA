@@ -435,6 +435,23 @@ async def say_to_user(text: str, limit: "int | None" = None):
             _patched_state_update(dict(transcript=speech_text))
         except Exception:
             pass
+
+        # ── KOKORO TTS — speaks ALL replies in one consistent voice ──────────
+        try:
+            from vani.audio.kokoro_tts import synthesize_and_play, synthesize_and_play_chunked
+            if len(speech_text) > 120:
+                spoke = await synthesize_and_play_chunked(speech_text)
+            else:
+                spoke = await synthesize_and_play(speech_text)
+            if spoke:
+                return   # ✅ Kokoro spoke it — done
+            # Kokoro unavailable or failed → fall through to Gemini below
+        except ImportError:
+            pass   # kokoro-onnx not installed — silent fallback to Gemini
+        except Exception as _ke:
+            logger.warning(f"[MESSAGING] Kokoro error, falling back to Gemini: {_ke}")
+        # ── END KOKORO TTS ───────────────────────────────────────────────────
+
         # generate_reply works with RealtimeModel; session.say() requires a separate TTS model
         try:
             allow_interruptions = True
@@ -448,8 +465,15 @@ async def say_to_user(text: str, limit: "int | None" = None):
             queue = _get_task_queue()
             queue.set_interruptible(allow_interruptions)
 
-            handle = _session_ref.generate_reply(
-                user_input=speech_text,
+            # Mark text as fallback to prevent infinite loop in conversation_item_added
+            try:
+                from vani.app import mark_fallback_speech
+                mark_fallback_speech(speech_text)
+            except Exception:
+                pass
+
+            handle = _session_ref.say(
+                speech_text,
                 allow_interruptions=allow_interruptions,
             )
             if not allow_interruptions:
@@ -461,6 +485,11 @@ async def say_to_user(text: str, limit: "int | None" = None):
                 await handle.wait_for_playout()
         except (AttributeError, TypeError):
             # Fallback for non-realtime sessions
+            try:
+                from vani.app import mark_fallback_speech
+                mark_fallback_speech(speech_text)
+            except Exception:
+                pass
             handle = _session_ref.say(speech_text)
             if not allow_interruptions:
                 try:

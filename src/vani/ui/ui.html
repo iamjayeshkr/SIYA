@@ -800,7 +800,7 @@ body.connected .status-txt { color: var(--green); }
 
 <div id="video-overlay"></div>
 <div class="speak-ring"></div>
-<audio id="agent-audio" autoplay playsinline style="display:none;"></audio>
+<audio id="agent-audio" autoplay playsinline muted style="display:none;"></audio>
 
 <!-- Main UI -->
 <div class="shell">
@@ -1012,6 +1012,9 @@ function updateState(s) {
 //  AUDIO
 // ════════════════════════════════════════════════════════════
 const agentAudioEl = document.getElementById('agent-audio');
+if (agentAudioEl) {
+  agentAudioEl.muted = true;
+}
 let attachedAgentAudioKey = null;
 let attachedAgentAudioTrack = null;
 let agentSpeechActive = false;
@@ -1026,6 +1029,9 @@ function attachRemoteAudioTrack(track, publication) {
   } catch (_) {}
   attachedAgentAudioKey = key;
   attachedAgentAudioTrack = track;
+  if (agentAudioEl) {
+    agentAudioEl.muted = true;
+  }
   track.attach(agentAudioEl);
   agentAudioEl.play().catch(() => {
     console.warn('[audio] Autoplay blocked — waiting for user gesture');

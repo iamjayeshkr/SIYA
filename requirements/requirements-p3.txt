@@ -1,9 +1,4 @@
 # Vani OS — P3 requirements (Tauri desktop app IPC server)
 # Install with: pip install -r requirements/requirements-p3.txt
 
-# FastAPI + ASGI server for Tauri IPC on port 8765
-fastapi>=0.111.0
-uvicorn[standard]>=0.30.0
-
-# Already in base.txt — listed here for explicitness:
-# python-dotenv, requests
+# Tauri FastAPI/Uvicorn dependencies removed
