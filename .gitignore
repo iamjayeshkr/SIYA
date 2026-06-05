@@ -126,7 +126,7 @@ node_modules/
 conversations/
 book_memory_store/
 KMS/
-memory/
+/memory/
 vector_db/
 vectordb/
 chroma/

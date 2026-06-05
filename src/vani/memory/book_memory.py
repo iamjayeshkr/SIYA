@@ -32,6 +32,16 @@ STOP_WORDS = {
     "hai", "hain", "tha", "thi", "kya", "kaise", "kyu", "kyun", "mein", "mai",
     "mujhe", "bata", "samjha", "explain", "book", "pdf", "chapter", "concept",
     "iske", "isme", "usme", "from", "related", "vani", "rudra",
+    # Added common conversational words and pronouns:
+    "you", "your", "yours", "yourself", "me", "my", "myself", "mine", "we", "us", "our", "ours",
+    "he", "him", "his", "himself", "she", "her", "hers", "herself", "they", "them", "their", "theirs",
+    "who", "whom", "whose", "which", "that", "this", "these", "those",
+    "am", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "having", "do", "does", "did", "doing",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+    "a", "an", "the", "but", "or", "as", "if", "because", "until", "while", "of", "at", "by", "up", "down", "in", "out",
+    "hello", "hi", "hey", "yaar", "naam", "name", "batao", "karo", "karna", "krna", "bol", "bolo", "chal", "chalo",
+    "acha", "accha", "haan", "ha", "no", "yes", "please", "thanks", "thank", "sorry", "welcome",
 }
 
 BOOK_REFERENCE_WORDS = {
@@ -194,24 +204,18 @@ def _call_model(prompt: str, timeout: int = 45) -> str:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
     if api_key:
         try:
-            import requests
-
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            for model in ("gemini-2.5-flash", "gemini-2.0-flash"):
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-                resp = requests.post(url, json=payload, timeout=timeout)
-                if resp.status_code == 429:
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                text = (data.get("candidates", [{}])[0]
-                            .get("content", {})
-                            .get("parts", [{}])[0]
-                            .get("text", ""))
-                if text.strip():
-                    return text.strip()
-        except Exception:
-            pass
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            model_name = os.getenv("VANI_TEXT_MODEL", "gemini-flash-lite-latest")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            if response.text and response.text.strip():
+                return response.text.strip()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[BOOK_MEMORY] google-genai Client failed: {e}")
 
     try:
         import requests
@@ -421,25 +425,15 @@ def answer_from_books(query: str) -> str:
             context.append(block)
             total += len(block)
 
-    prompt = f"""You are Vani helping Rudra learn from uploaded books/PDFs.
+    prompt = f"""You are Vani (Rudra's close friend). Respond naturally in Hinglish, with a warm, casual, and authentic tone. No robotic buffering, and no rigid structured formats (like "Short direct answer first", "Deep explanation", etc.) unless Rudra explicitly asks for study notes, deep study maps, or revision checklists.
 
-Default language: Hinglish.
-If Rudra asks in English or says "in English", answer in English.
-Explain concepts deeply but clearly, with examples and analogies when useful.
-If the answer is not in the retrieved book context, say that clearly and then give a careful general explanation.
-
-Rudra's question:
-{query}
+Keep your response friendly, concise (1-3 sentences normally), and highly genuine, just like a real human companion. Use the relevant book context provided below to answer Rudra's question directly, integrating the information naturally into a friendly chat.
 
 Relevant book context:
 {chr(10).join(context)}
 
-Return Markdown. Keep it structured:
-- Short direct answer first
-- Then deep explanation
-- Then example/analogy
-- Then quick revision points
-For exam/study requests, create chapter-wise notes, likely questions, practice Q&A, and revision checklist.
+Rudra's question:
+{query}
 """
     reply = _call_model(prompt, timeout=45)
     if reply:

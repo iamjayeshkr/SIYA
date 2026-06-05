@@ -290,15 +290,17 @@
   // ── Tauri bridge ───────────────────────────────────────────
 
   async function tauriInvoke(cmd, args = {}) {
-    if (window.__TAURI__?.core) {
+    // Tauri v2: __TAURI__.core.invoke is the correct path
+    if (window.__TAURI__?.core?.invoke) {
       return window.__TAURI__.core.invoke(cmd, args);
     }
-    if (window.__TAURI_INTERNALS__) {
-      // Tauri v2 internal bridge
-      return new Promise((res, rej) => {
-        window.__TAURI_INTERNALS__.transformCallback = window.__TAURI_INTERNALS__.transformCallback || (() => {});
-        window.__TAURI__.invoke?.(cmd, args).then(res).catch(rej);
-      });
+    // Tauri v2 alternate (withGlobalTauri=true exposes __TAURI_INTERNALS__)
+    if (window.__TAURI_INTERNALS__?.invoke) {
+      return window.__TAURI_INTERNALS__.invoke(cmd, args);
+    }
+    // Last resort: top-level __TAURI__.invoke (v1 compat)
+    if (window.__TAURI__?.invoke) {
+      return window.__TAURI__.invoke(cmd, args);
     }
   }
 
@@ -319,13 +321,14 @@
 
   // ── Show / hide island ─────────────────────────────────────
 
-  function showIsland() {
+  async function showIsland() {
     if (_fadingOut) {
       island.classList.remove("fading");
       _fadingOut = false;
     }
     _visible = true;
-    // small rAF so CSS transition triggers after display
+    // Tell Rust to make the Tauri window visible first, then animate in
+    await setOverlayVisible(true);
     requestAnimationFrame(() => island.classList.add("visible"));
   }
 
@@ -427,11 +430,17 @@
   // ── Tauri vani-state listener ──────────────────────────────
 
   async function bindTauriEvents() {
-    if (!window.__TAURI__?.event) return;
+    // Try Tauri v2 __TAURI__.event first, then __TAURI_INTERNALS__
+    const eventApi = window.__TAURI__?.event ?? window.__TAURI_INTERNALS__?.event;
+    if (!eventApi?.listen) {
+      console.warn("[overlay] No Tauri event API found — relying on WebSocket only");
+      return;
+    }
     try {
-      await window.__TAURI__.event.listen("vani-state", (ev) => {
+      await eventApi.listen("vani-state", (ev) => {
         if (ev?.payload) applyState(ev.payload);
       });
+      console.log("[overlay] Tauri vani-state listener registered");
     } catch (err) {
       console.warn("[overlay] Tauri event bind failed:", err);
     }

@@ -52,6 +52,32 @@ async def test_latest_wins_queue_cancellation():
     assert active_task.cancelled() or active_task.done()
 
 
+@pytest.mark.anyio
+async def test_latest_wins_queue_future_cancellation():
+    q = worker.LatestWinsQueue()
+    import asyncio
+    future = asyncio.get_event_loop().create_future()
+
+    async def dummy_task():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            pass
+
+    active_task = asyncio.create_task(dummy_task())
+    q.set_active_task(active_task, future)
+
+    # Trigger cancellation
+    q.cancel_active_task_threadsafe()
+
+    # Yield control to let event loop process cancellation
+    await asyncio.sleep(0.01)
+
+    assert future.done()
+    assert future.result() is q._STALE
+    assert active_task.cancelled() or active_task.done()
+
+
 @patch("vani.app._ws_send_all")
 @patch("vani.memory.conversation_writer.clear_conversation")
 @patch("vani.reasoning.worker._get_task_queue")

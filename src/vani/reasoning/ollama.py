@@ -36,6 +36,37 @@ def _dispatch_intent_in_thread(intent: str, data, query: str) -> None:
     ).start()
 
 
+def _call_gemini_fallback(prompt: str) -> str:
+    """Direct call to Gemini Flash API — extremely fast (milliseconds)."""
+    import os
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+    if not api_key:
+        logger.warning("[Gemini Fallback] No API key found in GEMINI_API_KEY or GOOGLE_API_KEY. Cannot run API fallback.")
+        return ""
+
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        model_name = os.getenv("VANI_TEXT_MODEL", "gemini-flash-lite-latest")
+        logger.info(f"[Gemini Fallback] Attempting tool routing using {model_name}...")
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "temperature": 0.1,
+            }
+        )
+        if response.text and response.text.strip():
+            logger.info(f"[Gemini Fallback] Routing decision from {model_name} succeeded.")
+            return response.text.strip()
+    except Exception as e:
+        logger.warning(f"[Gemini Fallback] google-genai fallback failed: {e}")
+
+    logger.warning("[Gemini Fallback] Falling back to local Ollama.")
+    return ""
+
+
 def _call_ollama_sync(prompt: str) -> str:
     """Synchronous streaming HTTP call — lower TTFT than stream=False."""
     import requests
@@ -161,21 +192,27 @@ async def _qwen_decide_and_run(query: str) -> str:
         from vani.reasoning.screen import learn_this
         return await learn_this.ainvoke({"content": query, "raw": query})
 
-    # ── Ollama path — check cache first ──────────────────────────────────────
+    # ── LLM path — check cache first ──────────────────────────────────────
     cache_key = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", query.lower())).strip()
     if cache_key in _OLLAMA_RESPONSE_CACHE:
         raw = _OLLAMA_RESPONSE_CACHE[cache_key]
-        logger.info(f"[Qwen] Cache hit: {cache_key!r}")
+        logger.info(f"[LLM Router] Cache hit: {cache_key!r}")
     else:
         prompt = _build_qwen_prompt(query)
         loop = asyncio.get_running_loop()
-        loop = asyncio.get_running_loop()
-        if _ollama_semaphore is None or _ollama_semaphore_loop is not loop:
-            _ollama_semaphore = asyncio.Semaphore(1)
-            _ollama_semaphore_loop = loop
-        async with _ollama_semaphore:
-            raw = await loop.run_in_executor(None, _call_ollama_sync, prompt)
-            await asyncio.sleep(0.1)
+        
+        # 1. Try hyper-fast Gemini REST API fallback first
+        raw = await loop.run_in_executor(None, _call_gemini_fallback, prompt)
+        
+        # 2. Fall back to local Ollama if Gemini was offline, rate-limited, or failed
+        if not raw:
+            if _ollama_semaphore is None or _ollama_semaphore_loop is not loop:
+                _ollama_semaphore = asyncio.Semaphore(1)
+                _ollama_semaphore_loop = loop
+            async with _ollama_semaphore:
+                raw = await loop.run_in_executor(None, _call_ollama_sync, prompt)
+                await asyncio.sleep(0.1)
+                
         if len(_OLLAMA_RESPONSE_CACHE) >= _OLLAMA_CACHE_MAX:
             _OLLAMA_RESPONSE_CACHE.popitem(last=False)
         _OLLAMA_RESPONSE_CACHE[cache_key] = raw

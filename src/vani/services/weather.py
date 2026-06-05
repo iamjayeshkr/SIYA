@@ -12,7 +12,7 @@ from langchain_core.tools import tool
 
 from vani.config import PROJECT_ROOT
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

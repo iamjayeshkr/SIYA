@@ -26,7 +26,7 @@ from vani.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 IS_MAC = sys.platform == "darwin"
 

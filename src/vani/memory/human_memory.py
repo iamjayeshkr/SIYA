@@ -36,6 +36,16 @@ STOP_WORDS = {
     "hai", "hain", "tha", "thi", "kya", "kaise", "kyu", "kyun", "mein", "mai",
     "mujhe", "bata", "samjha", "explain", "book", "pdf", "chapter", "concept",
     "iske", "isme", "usme", "related", "vani", "rudra",
+    # Added common conversational words and pronouns:
+    "you", "your", "yours", "yourself", "me", "my", "myself", "mine", "we", "us", "our", "ours",
+    "he", "him", "his", "himself", "she", "her", "hers", "herself", "they", "them", "their", "theirs",
+    "who", "whom", "whose", "which", "that", "this", "these", "those",
+    "am", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "having", "do", "does", "did", "doing",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+    "a", "an", "the", "but", "or", "as", "if", "because", "until", "while", "of", "at", "by", "up", "down", "in", "out",
+    "hello", "hi", "hey", "yaar", "naam", "name", "batao", "karo", "karna", "krna", "bol", "bolo", "chal", "chalo",
+    "acha", "accha", "haan", "ha", "no", "yes", "please", "thanks", "thank", "sorry", "welcome",
 }
 
 
@@ -246,12 +256,13 @@ def retrieve_temp_document_context(query: str, max_chunks: int = 5) -> list[dict
             (_now(),),
         ).fetchall()
 
+    min_score = 2 if len(q_tokens) >= 2 else 1
     for row in rows:
         c_tokens = set(json.loads(row["tokens"] or "[]"))
         overlap = len(q_tokens & c_tokens)
         title_bonus = 3 if row["filename"].lower() in q_lower else 0
         score = overlap + title_bonus
-        if score > 0:
+        if score >= min_score:
             scored.append(
                 (
                     score,

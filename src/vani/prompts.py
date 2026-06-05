@@ -106,7 +106,7 @@ except ImportError:
     _VOICE_SECURITY_AVAILABLE = False
     def get_voice_security_prompt(): return ""
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 DEFAULT_TIMEZONE = os.getenv("VANI_TIMEZONE", "Asia/Kolkata")
 

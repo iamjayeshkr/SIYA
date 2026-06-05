@@ -39,7 +39,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 from vani.config import ASSETS_ROOT, PACKAGE_ROOT, PROJECT_ROOT
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vani")
@@ -255,6 +255,26 @@ def _ws_client_thread(sock, client_id: int = 0):
 def _patched_state_update(new_values: dict):
     state.update(new_values)
     _ws_push_state()
+    # Sync state across processes if in worker mode
+    import sys
+    if "--worker" in sys.argv:
+        def _send_sync():
+            try:
+                import urllib.request
+                import json
+                data = json.dumps(new_values).encode("utf-8")
+                req = urllib.request.Request(
+                    "http://127.0.0.1:5500/update_state",
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=1.0) as f:
+                    f.read()
+            except Exception:
+                pass
+        import threading
+        threading.Thread(target=_send_sync, daemon=True).start()
 
 
 def _notify_mac(title: str, message: str):
@@ -410,6 +430,15 @@ class _Handler(BaseHTTPRequestHandler):
                 log.exception("[text] /send_text handler crashed")
                 self._send_json(500, {"reply": f"❌ Server error: {e}"})
 
+        elif self.path == "/update_state":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length)) if length > 0 else {}
+                _patched_state_update(body)
+                self._send_json(200, {"ok": True})
+            except Exception as e:
+                self._send_json(500, {"ok": False, "error": str(e)})
+
         elif self.path == "/minimize":
             try:
                 import subprocess
@@ -563,6 +592,11 @@ class _Handler(BaseHTTPRequestHandler):
                         asyncio.run_coroutine_threadsafe(_session_ref.interrupt(), _session_loop)
                 except Exception as e:
                     log.warning(f"[wake_reset] LiveKit session interrupt failed: {e}")
+                try:
+                    from vani.ui.teach_bridge import clear_teach_visual
+                    clear_teach_visual()
+                except Exception as e:
+                    log.warning(f"[wake_reset] clear teach visual failed: {e}")
                 _ws_send_all({"action": "clear_chat"})
                 self._send_json(200, {"ok": True})
             except Exception as e:
@@ -924,7 +958,6 @@ class _Handler(BaseHTTPRequestHandler):
 
             elif self.path.startswith("/plugin_signal.json"):
                 try:
-                    from vani.config import PACKAGE_ROOT
                     plugin_signal_path = PACKAGE_ROOT / "ui" / "plugin_signal.json"
                     if plugin_signal_path.exists():
                         body = plugin_signal_path.read_bytes()
@@ -1205,7 +1238,7 @@ def _start_tauri_api_server():
                 confidence = float(body.get("confidence", 1.0))
                 result = wake_word_controller.trigger(confidence)
                 if result["acted"]:
-                    state["listening"] = True
+                    _patched_state_update({"listening": True})
                 return result
             except Exception as e:
                 return {"acted": False, "reason": str(e)}
@@ -1280,10 +1313,13 @@ def _generate_token(room_name: str, identity: str) -> str:
 async def _setup_room(room_name: str):
     try:
         from livekit.api import LiveKitAPI, CreateRoomRequest, CreateAgentDispatchRequest
+        import aiohttp
+        timeout = aiohttp.ClientTimeout(total=60.0, connect=30.0)
         lk = LiveKitAPI(
             os.getenv("LIVEKIT_URL", ""),
             os.getenv("LIVEKIT_API_KEY", ""),
             os.getenv("LIVEKIT_API_SECRET", ""),
+            timeout=timeout,
         )
         try:
             await lk.room.create_room(CreateRoomRequest(name=room_name))
@@ -1397,7 +1433,7 @@ async def entrypoint(ctx):
     from vani.reasoning import get_thinking_capability_tool
 
     log.info(f"[vani] room={ctx.room.name} session starting")
-    state["status"] = "Connecting..."
+    _patched_state_update({"status": "Connecting..."})
 
     MEMORY_ENABLED = False
     try:
@@ -1599,6 +1635,15 @@ async def entrypoint(ctx):
         def _on_user(*_):
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             session_audio_buffer.clear()
+            try:
+                from vani.reasoning.worker import _get_task_queue
+                q = _get_task_queue()
+                if q.is_interruptible():
+                    q.cancel_active_task_threadsafe()
+                else:
+                    log.info("[interrupted] Active task is marked non-interruptible. Ignoring user speaking.")
+            except Exception as e:
+                log.warning(f"[interrupted] Failed to cancel active task on user speaking: {e}")
 
         @sess.on("user_stopped_speaking")
         def _on_stop2(*_):
@@ -1697,7 +1742,6 @@ async def entrypoint(ctx):
             "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.4")),
             "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "1.0")),
             "min_interruption_duration": float(os.getenv("VANI_INTERRUPT_MIN_DURATION", "0.3")),
-            "false_interruption_timeout": float(os.getenv("VANI_FALSE_INTERRUPT_TIMEOUT", "1.0")),
         }
         if vad:
             session_kwargs["vad"] = vad
@@ -1763,7 +1807,7 @@ async def entrypoint(ctx):
                 log.error(f"[vani] Failed to register fallback session: {e}")
         except Exception as e:
             log.error(f"[vani] Fallback failed: {e}")
-            state["status"] = f"Error: {e}"
+            _patched_state_update({"status": f"Error: {e}"})
             return
 
     _patched_state_update(dict(connected=True, status="Ready - say something!"))
@@ -1869,7 +1913,9 @@ def main():
         from vani.memory.vector_store import SQLiteVectorStore
         store = SQLiteVectorStore()
         store.clear_all()
-        log.info("[startup] Memory reset successfully on startup")
+        from vani.ui.teach_bridge import clear_teach_visual
+        clear_teach_visual()
+        log.info("[startup] Memory and teaching visual reset successfully on startup")
     except Exception as startup_reset_err:
         log.warning(f"[startup] Memory reset on startup failed (non-fatal): {startup_reset_err}")
 

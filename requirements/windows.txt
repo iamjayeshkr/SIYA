@@ -70,6 +70,11 @@ av
 # ── Desktop app (Phase 1) ─────────────────────────────────────────────────────
 pywebview
 
+# ── PDF / Document extraction ───────────────────────────────────────────────
+pdfminer.six
+pypdf
+python-docx
+
 # ── Phase 3 (system tray + hotkey) ───────────────────────────────────────────
 # Uncomment when starting Phase 3:
 # pystray                            # Windows system tray icon

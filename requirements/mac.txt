@@ -105,6 +105,11 @@ opencv-python-headless==4.10.0.84
 # paddleocr==2.8.1
 # paddlepaddle==2.6.2
 
+# ── PDF / Document extraction ───────────────────────────────────────────────
+pdfminer.six
+pypdf
+python-docx
+
 # ── Desktop / UI ──────────────────────────────────────────────────────────────
 pywebview
 

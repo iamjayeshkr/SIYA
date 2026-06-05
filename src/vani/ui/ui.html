@@ -1203,6 +1203,11 @@ async function connectLiveKit() {
   // Establish state push WebSocket immediately (replaces /state polling)
   connectStateWs();
 
+  if (window.isConnectingLiveKit) return;
+  window.isConnectingLiveKit = true;
+
+  try {
+
   const backendMeta = document.querySelector('meta[name="voice-backend"]');
   const voiceBackend = backendMeta ? backendMeta.content : 'livekit';
   if (voiceBackend !== 'livekit') {
@@ -1284,6 +1289,10 @@ if (!lkUrl || !lkToken || lkToken === 'PENDING') {
     attachedAgentAudioKey = null;
     attachedAgentAudioTrack = null;
     updateState({ connected: false, speaking: false, listening: false, status: 'Disconnected' });
+    if (!window.isConnectingLiveKit) {
+      console.log('[livekit] Room disconnected, scheduling retry...');
+      scheduleLiveKitRetry('Disconnected from room');
+    }
   });
 
   room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (speakers) => {
@@ -1305,6 +1314,10 @@ if (!lkUrl || !lkToken || lkToken === 'PENDING') {
   try {
     await room.connect(lkUrl, lkToken);
     livekitRetryCount = 0;
+    if (livekitRetryTimer) {
+      clearTimeout(livekitRetryTimer);
+      livekitRetryTimer = null;
+    }
   } catch (err) {
     console.error('[livekit] Connection failed:', err);
     scheduleLiveKitRetry(err?.message || err);
@@ -1332,6 +1345,9 @@ if (!lkUrl || !lkToken || lkToken === 'PENDING') {
   }
 
   await unlockRoomAudio(room);
+  } finally {
+    window.isConnectingLiveKit = false;
+  }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1878,6 +1894,7 @@ docFile.addEventListener('change', () => {
   let _pollInterval = null;
   let _currentConcept = '';
   let _autoCloseTimer = null;
+  let _isClosedByUser = false;
 
   // ── Poll teach_signal.json every 600ms ─────────────────────────
   function startPolling() {
@@ -1891,10 +1908,13 @@ docFile.addEventListener('change', () => {
       if (!res.ok) return;
       const data = await res.json();
       if (!data || !data.ts) return;
+      
       // Only act if this is a NEW lesson (different timestamp)
-      if (data.ts === _lastTs) return;
-      _lastTs = data.ts;
-      showTeachPanel(data);
+      if (data.ts !== _lastTs) {
+        _lastTs = data.ts;
+        _isClosedByUser = false;
+        showTeachPanel(data);
+      }
     } catch (_) {
       // Signal file not found = no active teach lesson, that's fine
     }
@@ -1976,8 +1996,7 @@ docFile.addEventListener('change', () => {
   window.closeTeachPanel = function() {
     document.getElementById('teach-panel').classList.remove('visible');
     clearAutoClose();
-    // Reset ts so same lesson can re-trigger if asked again
-    _lastTs = 0;
+    _isClosedByUser = true;
   };
 
   function clearAutoClose() {

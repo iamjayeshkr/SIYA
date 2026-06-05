@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from vani.config import PROJECT_ROOT
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 CITY_TTL = 3600
 WEATHER_TTL = 600

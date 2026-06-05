@@ -79,6 +79,14 @@ class LatestWinsQueue:
         self._event: asyncio.Event = asyncio.Event()
         self._pending_item: "tuple[str, asyncio.Future] | None" = None
         self._active_task: "asyncio.Task | None" = None   # currently-running tool task
+        self._active_future: "asyncio.Future | None" = None # currently-running tool future
+        self._allow_interruptions: bool = True
+
+    def is_interruptible(self) -> bool:
+        return self._allow_interruptions
+
+    def set_interruptible(self, val: bool) -> None:
+        self._allow_interruptions = val
 
     # ── called by thinking_capability (producer side) ─────────────────────────
 
@@ -91,16 +99,21 @@ class LatestWinsQueue:
                 old_future.set_result(self._STALE)
             logger.info(f"[LWQ] ⚡ Stale pending task dropped: '{_old_query}'")
 
-        # 2. Cancel the actively-running tool task so we stop wasting cycles
+        # 2. Resolve the currently running future as STALE first, so it is silent
+        if self._active_future is not None and not self._active_future.done():
+            self._active_future.set_result(self._STALE)
+            logger.info("[LWQ] ⚡ Active future marked STALE")
+
+        # 3. Cancel the actively-running tool task so we stop wasting cycles
         if self._active_task is not None and not self._active_task.done():
             self._active_task.cancel()
             logger.info("[LWQ] 🛑 Active task cancelled — newer instruction arrived")
 
-        # 3. Swap in the new instruction
+        # 4. Swap in the new instruction
         self._pending_item = item
         logger.info(f"[LWQ] ✅ New instruction stored: '{item[0]}'")
 
-        # 4. Wake the worker
+        # 5. Wake the worker
         self._event.set()
 
     async def put(self, item: "tuple[str, asyncio.Future]") -> None:
@@ -125,12 +138,25 @@ class LatestWinsQueue:
         """No-op — kept for API compatibility with asyncio.Queue callers."""
         pass
 
-    def set_active_task(self, task: "asyncio.Task | None") -> None:
-        """Register the currently-running tool asyncio.Task so it can be cancelled."""
+    def set_active_task(self, task: "asyncio.Task | None", future: "asyncio.Future | None" = None) -> None:
+        """Register the currently-running tool asyncio.Task and Future so they can be cancelled."""
         self._active_task = task
+        self._active_future = future
 
     def cancel_active_task_threadsafe(self) -> None:
         """Thread-safe cancel the active task and clear pending items."""
+        if self._active_future is not None and not self._active_future.done():
+            try:
+                loop = self._active_future.get_loop()
+                loop.call_soon_threadsafe(self._active_future.set_result, self._STALE)
+                logger.info("[LWQ] Sent stale signal thread-safely to active future")
+            except Exception as e:
+                logger.warning(f"[LWQ] Failed to resolve active future thread-safely: {e}")
+                try:
+                    self._active_future.set_result(self._STALE)
+                except Exception:
+                    pass
+
         if self._active_task is not None and not self._active_task.done():
             try:
                 loop = self._active_task.get_loop()
@@ -343,7 +369,7 @@ async def _background_worker():
                 _run_single_tool(query, future),
                 name=f"tool:{query[:40]}"
             )
-            queue.set_active_task(task)   # ← allows cancellation if user speaks again
+            queue.set_active_task(task, future)   # ← allows cancellation if user speaks again
 
             # Await the task.  If the user fires a new instruction mid-flight,
             # the LatestWinsQueue will cancel this task via set_active_task.
@@ -352,9 +378,9 @@ async def _background_worker():
             except asyncio.CancelledError:
                 logger.info(f"[Worker] 🛑 Task cancelled (new instruction took over): '{query}'")
                 if not future.done():
-                    future.set_result("Naya kaam aa gaya — pehla chhod rahi hoon.")
+                    future.set_result(LatestWinsQueue._STALE)
             finally:
-                queue.set_active_task(None)
+                queue.set_active_task(None, None)
 
         except asyncio.CancelledError:
             logger.info("[Worker] Worker cancelled.")
@@ -411,16 +437,37 @@ async def say_to_user(text: str, limit: "int | None" = None):
             pass
         # generate_reply works with RealtimeModel; session.say() requires a separate TTS model
         try:
+            allow_interruptions = True
+            if len(speech_text) > 120 or any(kw in speech_text.lower() for kw in [
+                "samjho", "explain", "concept", "example", "example ka matlab", "nirdesh", "tarika", "step by step",
+                "seekho", "padhao", "tutorial"
+            ]):
+                allow_interruptions = False
+                logger.info(f"[MESSAGING] Disabling interruptions for explanation (len={len(speech_text)})")
+
+            queue = _get_task_queue()
+            queue.set_interruptible(allow_interruptions)
+
             handle = _session_ref.generate_reply(
                 user_input=speech_text,
-                allow_interruptions=True,
+                allow_interruptions=allow_interruptions,
             )
-            if os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
+            if not allow_interruptions:
+                try:
+                    await handle.wait_for_playout()
+                finally:
+                    queue.set_interruptible(True)
+            elif os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
                 await handle.wait_for_playout()
         except (AttributeError, TypeError):
             # Fallback for non-realtime sessions
             handle = _session_ref.say(speech_text)
-            if os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
+            if not allow_interruptions:
+                try:
+                    await handle.wait_for_playout()
+                finally:
+                    _get_task_queue().set_interruptible(True)
+            elif os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
                 await handle.wait_for_playout()
     except Exception as e:
         logger.error(f"[MESSAGING] Error in say_to_user: {e}")
@@ -456,6 +503,22 @@ async def ask_realtime_from_text(text: str) -> bool:
                 await _session_ref.interrupt()
             except Exception:
                 pass
+        try:
+            _get_task_queue().cancel_active_task_threadsafe()
+        except Exception:
+            pass
+
+        # Check if the user query asks for explanation/teaching
+        allow_interruptions = True
+        lowered = text.lower()
+        if any(kw in lowered for kw in [
+            "explain", "teach", "samjhao", "concept", "tutorial", "what is", "kaise", "padhao", "learn"
+        ]):
+            allow_interruptions = False
+            logger.info("[TEXT→REALTIME] Disabling interruptions for explanation query.")
+
+        queue = _get_task_queue()
+        queue.set_interruptible(allow_interruptions)
 
         # generate_reply API changed between livekit-agents versions —
         # try the current API first, fall back to say() if not available.
@@ -467,9 +530,14 @@ async def ask_realtime_from_text(text: str) -> bool:
                     "the realtime Gemini voice. If it is an actionable command, use your available "
                     "tool normally. Do not mention that it was typed unless relevant."
                 ),
-                allow_interruptions=True,
+                allow_interruptions=allow_interruptions,
             )
-            if os.getenv("VANI_WAIT_FOR_TEXT_REALTIME_PLAYOUT", "0") == "1":
+            if not allow_interruptions:
+                try:
+                    await handle.wait_for_playout()
+                finally:
+                    queue.set_interruptible(True)
+            elif os.getenv("VANI_WAIT_FOR_TEXT_REALTIME_PLAYOUT", "0") == "1":
                 await handle.wait_for_playout()
         except (AttributeError, TypeError) as e:
             # generate_reply not available or signature changed — fall back to say()

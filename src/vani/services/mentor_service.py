@@ -503,7 +503,7 @@ Do not write ```json tags, output raw JSON only.
         # Fallback question
         item_id = f"quiz_{concept_id}_fallback"
         question = f"Describe what you understand about {concept_name} in your own words."
-        mentor_db.add_retention_item(item_id, concept_id, "active_recall", question, "Concept description")
+        mentor_db.add_retention_item(item_id, concept_id, "active_recall", question, "Concept description", [])
         return {"id": item_id, "question": question, "options": [], "type": "active_recall"}
 
 

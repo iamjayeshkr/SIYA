@@ -11,6 +11,7 @@ from langchain_core.tools import tool
 import vani.services.mentor_service as mentor_service
 import vani.memory.mentor_memory as mentor_db
 import vani.memory.human_memory as human_memory
+from vani.ui.teach_bridge import send_teach_visual
 
 logger = logging.getLogger("vani.reasoning.tools.mentor_mode")
 

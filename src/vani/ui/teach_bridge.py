@@ -13,3 +13,12 @@ async def send_teach_visual(lesson: dict) -> None:
         except Exception as e:
             logger.warning("TEACH_BRIDGE write failed: %s", e)
     await asyncio.get_event_loop().run_in_executor(None, _write)
+
+
+def clear_teach_visual() -> None:
+    try:
+        if TEACH_SIGNAL_PATH.exists():
+            TEACH_SIGNAL_PATH.unlink()
+            logger.info("Cleared teach signal file successfully.")
+    except Exception as e:
+        logger.warning("Failed to clear teach signal file: %s", e)

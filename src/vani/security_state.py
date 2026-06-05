@@ -73,7 +73,7 @@ NEXT_QUESTION_PHRASES = [
     "Achha. Ab yeh batao — {q}",
 ]
 
-# ── State ─────────────────────────────────────────────────────────────────────
+# ── State ────────────────────────────────────────────────
 
 _lock = threading.Lock()
 
@@ -85,7 +85,7 @@ _opening_sent: bool = False
 _short_answer_streak: int = 0
 MAX_SHORT_STREAK = 2  # after this many one-word answers, stop advancing
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Public API ──────────────────────────────────────────────
 
 def is_verify_enabled() -> bool:
     """Return True if speaker verification is active in .env."""
