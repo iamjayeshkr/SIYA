@@ -1009,6 +1009,11 @@ function updateState(s) {
     kokoroEnabled = !!s.kokoro_enabled;
     if (agentAudioEl) {
       agentAudioEl.muted = kokoroEnabled;
+      if (kokoroEnabled) {
+        agentAudioEl.setAttribute('muted', '');
+      } else {
+        agentAudioEl.removeAttribute('muted');
+      }
     }
   }
 }
@@ -1037,10 +1042,15 @@ function attachRemoteAudioTrack(track, publication) {
   } catch (_) {}
   attachedAgentAudioKey = key;
   attachedAgentAudioTrack = track;
+  track.attach(agentAudioEl);
   if (agentAudioEl) {
     agentAudioEl.muted = kokoroEnabled;
+    if (kokoroEnabled) {
+      agentAudioEl.setAttribute('muted', '');
+    } else {
+      agentAudioEl.removeAttribute('muted');
+    }
   }
-  track.attach(agentAudioEl);
   agentAudioEl.play().catch(() => {
     console.warn('[audio] Autoplay blocked — waiting for user gesture');
     if (window.room) showAudioUnlock(window.room);

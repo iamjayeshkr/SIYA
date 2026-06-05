@@ -49,6 +49,38 @@ PREFERRED_MODEL = "gemini-3.1-flash"
 REALTIME_MODEL  = os.getenv("VANI_REALTIME_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 log.info(f"[MODEL] Preferred: {PREFERRED_MODEL}  Runtime (realtime): {REALTIME_MODEL}")
 
+# ── English Detection Helper ──────────────────────────────────────────────────
+import re
+
+HINGLISH_WORDS = {
+    "hai", "ho", "se", "ko", "ki", "ka", "ke", "me", "mein", "bhi", "toh", "kya",
+    "karo", "kar", "raha", "rha", "rahi", "rhi", "bol", "sakte", "tu", "tera",
+    "mera", "meri", "mere", "aap", "aur", "kaise", "kab", "kaha", "kyu", "kyon",
+    "achha", "acha", "theek", "thik", "bhai", "bhaiya", "ab", "abhi", "aaj", "kal",
+    "hoga", "hogi", "chahiye", "bolo", "bolna", "likho", "likhna", "suno", "sunna",
+    "samajh", "samajho", "yaar", "dost", "shuru", "khatam", "band", "chalu", "kholo",
+    "nikalo", "nikalna", "dikhao", "dikhana", "batao", "batana", "pucho", "puchna",
+    "socho", "sochna", "samjho", "samjhna", "apna", "apni", "apne", "tujhe", "mujhe",
+    "karta", "karti", "karte", "gaya", "gayi", "gaye", "tha", "thi", "the", "didi",
+    "chalo", "chala", "chalna", "hona", "hone", "honi", "jaise", "waise", "aisa",
+    "waisa", "karna", "karne", "karni", "hoga", "hogi", "hoge"
+}
+
+def is_english(text: str) -> bool:
+    text = text.lower().strip()
+    if not text:
+        return False
+    if not text.isascii():
+        return False
+    words = re.findall(r"\b[a-z]+\b", text)
+    if not words:
+        return False
+    # If any word matches Hinglish stopwords, it is not purely English
+    for w in words:
+        if w in HINGLISH_WORDS:
+            return False
+    return True
+
 
 # ── FIX 5: Single AUDIO_PRIORITY import block — duplicate except removed ───────
 # Original had two except ImportError handlers; the second always ran and set
@@ -1287,7 +1319,7 @@ async def entrypoint(ctx):
                     voice="Aoede",
                     temperature=float(os.getenv("VANI_REALTIME_TEMPERATURE", "0.65")),
                     instructions=realtime_prompt,
-                    modalities=["AUDIO"],            # Gemini returns audio, but agent session output track publishing will be disabled
+                    modalities=["AUDIO"],
                 ),
                 tools=[get_thinking_capability_tool()],
             )
@@ -1381,6 +1413,7 @@ async def entrypoint(ctx):
                 pass
 
     def _register_session_events(sess):
+        _session_vars = {"last_user_transcript": None}
         @sess.on("agent_started_speaking")
         def _on_speak(*_):
             _patched_state_update(dict(speaking=True, listening=False, processing=False, status="Speaking...", transcript=""))
@@ -1431,7 +1464,11 @@ async def entrypoint(ctx):
                         return
                     _patched_state_update(dict(transcript=text))
                     if KOKORO_ENABLED:
-                        asyncio.create_task(say_to_user(text))
+                        last_user = _session_vars.get("last_user_transcript")
+                        if last_user is None or is_english(last_user):
+                            asyncio.create_task(say_to_user(text))
+                        else:
+                            log.info("[Kokoro] Skipped speaking because last user input was not in English: %r", last_user)
             except Exception:
                 pass
 
@@ -1450,6 +1487,7 @@ async def entrypoint(ctx):
                         # Strictly interim — skip processing entirely
                         return
                     # is_final is True or None (attribute absent = treat as final)
+                    _session_vars["last_user_transcript"] = text
 
                     # ── Speaker Verification Gate ─────────────────────────────────
                     if SECURITY_ENABLED:
@@ -1546,8 +1584,7 @@ async def entrypoint(ctx):
 
             room_output = None
             if RoomOutputOptions is not None:
-                from vani.audio.kokoro_tts import KOKORO_ENABLED
-                room_output = RoomOutputOptions(audio_enabled=not KOKORO_ENABLED)
+                room_output = RoomOutputOptions(audio_enabled=True)
 
             kwargs = {}
             if room_input:
@@ -1599,10 +1636,10 @@ async def entrypoint(ctx):
 
     _patched_state_update(dict(connected=True, status="Ready - say something!"))
     _patched_state_update(dict(speaking=False, listening=True, processing=False))
-    _notify_mac("Vani ready", "Voice conversation ready hai.")
+    _notify_mac("Vani ready", "Voice conversation is ready.")
     try:
         from vani.reasoning import say_to_user
-        asyncio.create_task(say_to_user("Vani ready hai. Ab bol sakte ho.", limit=None))
+        asyncio.create_task(say_to_user("Vani is ready. You can speak now.", limit=None))
         if os.getenv("VANI_STARTUP_MEMORY_BRIEF", "1") == "1":
             from vani.memory.working_memory import get_startup_memory_brief
             brief = get_startup_memory_brief()
