@@ -428,7 +428,22 @@ async def say_to_user(text: str, limit: "int | None" = None):
         return
     try:
         speech_text = _speech_safe_text(text, limit=limit)
-        speech_text = _normalize_for_tts(speech_text)   # ← Hinglish TTS fix
+        
+        # Check if Kokoro is using a Hindi voice to bypass English phonetic normalization
+        kokoro_voice = os.getenv("KOKORO_VOICE", "af_heart").lower()
+        is_hindi = kokoro_voice.startswith(("hf_", "hm_", "hi_"))
+        
+        if is_hindi:
+            speech_text = _normalize_for_tts(
+                speech_text,
+                strip_emoji=True,
+                strip_devanagari=False,
+                strip_markdown=True,
+                phonetic_map=False
+            )
+        else:
+            speech_text = _normalize_for_tts(speech_text)
+            
         logger.info(f"[MESSAGING] Speaking to user: {speech_text}")
         try:
             from vani.app import _patched_state_update
@@ -472,8 +487,8 @@ async def say_to_user(text: str, limit: "int | None" = None):
             except Exception:
                 pass
 
-            handle = _session_ref.say(
-                speech_text,
+            handle = _session_ref.generate_reply(
+                user_input=speech_text,
                 allow_interruptions=allow_interruptions,
             )
             if not allow_interruptions:
@@ -490,14 +505,17 @@ async def say_to_user(text: str, limit: "int | None" = None):
                 mark_fallback_speech(speech_text)
             except Exception:
                 pass
-            handle = _session_ref.say(speech_text)
-            if not allow_interruptions:
-                try:
+            try:
+                handle = _session_ref.say(speech_text)
+                if not allow_interruptions:
+                    try:
+                        await handle.wait_for_playout()
+                    finally:
+                        _get_task_queue().set_interruptible(True)
+                elif os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
                     await handle.wait_for_playout()
-                finally:
-                    _get_task_queue().set_interruptible(True)
-            elif os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
-                await handle.wait_for_playout()
+            except Exception as se:
+                logger.warning(f"[MESSAGING] Fallback say failed (likely no TTS model): {se}")
     except Exception as e:
         logger.error(f"[MESSAGING] Error in say_to_user: {e}")
 

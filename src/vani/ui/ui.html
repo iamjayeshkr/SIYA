@@ -800,7 +800,7 @@ body.connected .status-txt { color: var(--green); }
 
 <div id="video-overlay"></div>
 <div class="speak-ring"></div>
-<audio id="agent-audio" autoplay playsinline muted style="display:none;"></audio>
+<audio id="agent-audio" autoplay playsinline style="display:none;"></audio>
 
 <!-- Main UI -->
 <div class="shell">
@@ -1004,6 +1004,13 @@ function updateState(s) {
 
   if      (s.speaking)  setAvatarState('talking');
   else if (s.listening) setAvatarState('listening');
+
+  if (s.kokoro_enabled !== undefined) {
+    kokoroEnabled = !!s.kokoro_enabled;
+    if (agentAudioEl) {
+      agentAudioEl.muted = kokoroEnabled;
+    }
+  }
 }
 
 // ... rest of audio/livekit logic remains unchanged ...
@@ -1012,8 +1019,9 @@ function updateState(s) {
 //  AUDIO
 // ════════════════════════════════════════════════════════════
 const agentAudioEl = document.getElementById('agent-audio');
+let kokoroEnabled = false; // default
 if (agentAudioEl) {
-  agentAudioEl.muted = true;
+  agentAudioEl.muted = kokoroEnabled;
 }
 let attachedAgentAudioKey = null;
 let attachedAgentAudioTrack = null;
@@ -1030,7 +1038,7 @@ function attachRemoteAudioTrack(track, publication) {
   attachedAgentAudioKey = key;
   attachedAgentAudioTrack = track;
   if (agentAudioEl) {
-    agentAudioEl.muted = true;
+    agentAudioEl.muted = kokoroEnabled;
   }
   track.attach(agentAudioEl);
   agentAudioEl.play().catch(() => {

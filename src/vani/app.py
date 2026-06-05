@@ -46,7 +46,7 @@ log = logging.getLogger("vani")
 
 # ── Model routing ─────────────────────────────────────────────────────────────
 PREFERRED_MODEL = "gemini-3.1-flash"
-REALTIME_MODEL  = "gemini-2.5-flash-native-audio-preview-12-2025"
+REALTIME_MODEL  = os.getenv("VANI_REALTIME_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 log.info(f"[MODEL] Preferred: {PREFERRED_MODEL}  Runtime (realtime): {REALTIME_MODEL}")
 
 
@@ -104,6 +104,7 @@ state = {
     "text_ready": False,
     "status":     "Starting up...",
     "transcript": "",
+    "kokoro_enabled": os.getenv("KOKORO_ENABLED", "1") == "1",
 }
 
 # ── WebSocket push manager ─────────────────────────────────────────────────────
@@ -1286,7 +1287,7 @@ async def entrypoint(ctx):
                     voice="Aoede",
                     temperature=float(os.getenv("VANI_REALTIME_TEMPERATURE", "0.65")),
                     instructions=realtime_prompt,
-                    modalities=["AUDIO"],            # ← Gemini returns audio, but agent session output track publishing will be disabled
+                    modalities=["AUDIO"],            # Gemini returns audio, but agent session output track publishing will be disabled
                 ),
                 tools=[get_thinking_capability_tool()],
             )
@@ -1414,14 +1415,23 @@ async def entrypoint(ctx):
             _patched_state_update(dict(speaking=False, listening=False, processing=True, status="Thinking...", transcript=""))
 
         @sess.on("conversation_item_added")
-        def _on_item(item, *_):
+        def _on_item(event, *_):
             try:
                 from vani.reasoning.worker import say_to_user
-                role = getattr(item, "role", "")
-                text = getattr(item, "text", "") or getattr(item, "text_content", "") or ""
+                from vani.audio.kokoro_tts import KOKORO_ENABLED
+                chat_msg = getattr(event, "item", None)
+                if chat_msg is None:
+                    chat_msg = event
+                role = getattr(chat_msg, "role", "")
+                text = getattr(chat_msg, "text", "") or getattr(chat_msg, "text_content", "") or ""
                 if text and role in ("assistant", "agent"):
+                    text_strip = text.strip()
+                    if text_strip in _recently_spoken_fallback_texts:
+                        _recently_spoken_fallback_texts.discard(text_strip)
+                        return
                     _patched_state_update(dict(transcript=text))
-                    asyncio.create_task(say_to_user(text))   # ADD THIS
+                    if KOKORO_ENABLED:
+                        asyncio.create_task(say_to_user(text))
             except Exception:
                 pass
 
@@ -1505,9 +1515,9 @@ async def entrypoint(ctx):
     def _new_agent_session():
         session_kwargs = {
             "allow_interruptions": True,
-            "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.4")),
-            "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "1.0")),
-            "min_interruption_duration": float(os.getenv("VANI_INTERRUPT_MIN_DURATION", "0.3")),
+            "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.08")),
+            "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "0.25")),
+            "min_interruption_duration": float(os.getenv("VANI_INTERRUPT_MIN_DURATION", "0.12")),
         }
         if vad:
             session_kwargs["vad"] = vad
@@ -1536,7 +1546,8 @@ async def entrypoint(ctx):
 
             room_output = None
             if RoomOutputOptions is not None:
-                room_output = RoomOutputOptions(audio_enabled=True)
+                from vani.audio.kokoro_tts import KOKORO_ENABLED
+                room_output = RoomOutputOptions(audio_enabled=not KOKORO_ENABLED)
 
             kwargs = {}
             if room_input:

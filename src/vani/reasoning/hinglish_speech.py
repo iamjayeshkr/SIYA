@@ -666,6 +666,7 @@ def normalize_for_tts(
     strip_emoji: bool = True,
     strip_devanagari: bool = True,
     strip_markdown: bool = True,
+    phonetic_map: bool = True,
 ) -> str:
     """
     Normalize Hinglish text for TTS engines.
@@ -690,8 +691,9 @@ def normalize_for_tts(
         text = _strip_markdown(text)
 
     text = _normalise_punctuation(text)
-    text = _apply_phrase_map(text)
-    text = _apply_word_map(text)
+    if phonetic_map:
+        text = _apply_phrase_map(text)
+        text = _apply_word_map(text)
     text = re.sub(r"[ \t]{2,}", " ", text).strip()
 
     return text

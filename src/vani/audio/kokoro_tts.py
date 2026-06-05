@@ -148,11 +148,30 @@ def synthesize_sync(text: str) -> np.ndarray | None:
     if not _load_kokoro():
         return None
     try:
+        lang = "en-us"
+        voice = KOKORO_VOICE.lower()
+        if voice.startswith(("hf_", "hm_", "hi_")):
+            lang = "hi"
+        elif voice.startswith(("zf_", "zm_")):
+            lang = "zh-cn"
+        elif voice.startswith(("jf_", "jm_")):
+            lang = "ja"
+        elif voice.startswith(("ff_", "fm_")):
+            lang = "fr-fr"
+        elif voice.startswith(("ef_", "em_")):
+            lang = "es-es"
+        elif voice.startswith(("if_", "im_")):
+            lang = "it-it"
+        elif voice.startswith(("pf_", "pm_")):
+            lang = "pt-br"
+        elif voice.startswith(("bf_", "bm_")):
+            lang = "en-gb"
+
         samples, sample_rate = _kokoro.create(
             text,
             voice=KOKORO_VOICE,
             speed=KOKORO_SPEED,
-            lang="en-us",
+            lang=lang,
         )
         return samples
     except Exception as e:
