@@ -2,16 +2,21 @@
 # Python
 # ==================================================
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
+
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.pyre/
+.dmypy.json
+.pytype/
+
 .coverage
 .coverage.*
 htmlcov/
-.pyre/
-.ruff_cache/
 
 # ==================================================
 # Virtual Environments
@@ -20,8 +25,10 @@ venv/
 .venv/
 env/
 ENV/
+
 venv311/
 venv311_new/
+venv_new/
 
 # ==================================================
 # Environment Variables
@@ -30,12 +37,19 @@ venv311_new/
 .env.*
 !.env.example
 
+.env.backup
+
 # ==================================================
 # VS Code / IDEs
 # ==================================================
 .vscode/
 .idea/
+
 *.iml
+*.suo
+*.user
+*.userossc
+*.sln.docstates
 
 # ==================================================
 # macOS
@@ -45,6 +59,8 @@ venv311_new/
 .LSOverride
 .Spotlight-V100
 .Trashes
+.fseventsd
+.VolumeIcon.icns
 
 # ==================================================
 # Windows
@@ -57,38 +73,41 @@ Desktop.ini
 # ==================================================
 *.log
 logs/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
 # ==================================================
 # Build Outputs
 # ==================================================
 build/
 dist/
+release/
+out/
 downloads/
 temp/
 tmp/
-out/
-release/
 
 # ==================================================
 # Python Packaging
 # ==================================================
 *.egg-info/
 .eggs/
+
 pip-wheel-metadata/
-build/
-dist/
+wheelhouse/
 
 # ==================================================
 # Rust / Tauri
 # ==================================================
 src-tauri/target/
-target/
 src-tauri/gen/
 
-# Keep Cargo.lock for applications
+target/
+
+# Keep Cargo.lock for desktop applications
 #!Cargo.lock
 
 # ==================================================
@@ -109,11 +128,14 @@ android/app/build/
 # Node.js
 # ==================================================
 node_modules/
+
 .npm/
 .pnpm-store/
+.yarn/
+.yarn-cache/
 
 # ==================================================
-# Database / Storage
+# Databases
 # ==================================================
 *.db
 *.sqlite
@@ -121,18 +143,22 @@ node_modules/
 *.mdb
 
 # ==================================================
-# AI Memory & Knowledge Stores
+# AI Memory / Knowledge Stores
 # ==================================================
 conversations/
 book_memory_store/
-KMS/
-/memory/
+memory/
+
 vector_db/
 vectordb/
+
 chroma/
 chroma_db/
+
 faiss_index/
+
 knowledge_store/
+knowledge_base/
 
 # ==================================================
 # AI Models
@@ -151,6 +177,7 @@ checkpoints/
 # Audio / Voice Data
 # ==================================================
 recordings/
+
 audio_cache/
 tts_cache/
 voice_cache/
@@ -177,9 +204,11 @@ service-account.json
 # Generated Files
 # ==================================================
 _ui_patched.html
+
 *.tmp
 *.bak
 *.cache
+
 *.swp
 *.swo
 
@@ -187,8 +216,9 @@ _ui_patched.html
 # Claude / Cursor / AI Tools
 # ==================================================
 .cursor/
-.claude/
 .cursor-cache/
+
+.claude/
 
 # ==================================================
 # Jupyter
@@ -212,13 +242,38 @@ coverage/
 # ==================================================
 *.app
 *.dmg
+
 *.exe
 *.msi
+
 *.deb
 *.rpm
+
 *.apk
 *.aab
+
 *.ipa
+
+# ==================================================
+# Project Specific (VANI)
+# ==================================================
+
+# Temporary workspace
+scratch/
+
+# Local Obsidian notes
+obsidian_vault/
+
+# User-specific local file
+Users.fileloc
+
+# Runtime files
+*.pid
+*.lock
+
+# Local generated audio/transcriptions
+transcripts/
+speech_cache/
 
 # ==================================================
 # Miscellaneous
