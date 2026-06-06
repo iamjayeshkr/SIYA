@@ -37,7 +37,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-from vani.config import ASSETS_ROOT, PACKAGE_ROOT, PROJECT_ROOT
+from vani.config import ASSETS_ROOT, PACKAGE_ROOT, PROJECT_ROOT, INDIC_TTS_ENABLED
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -136,7 +136,7 @@ state = {
     "text_ready": False,
     "status":     "Starting up...",
     "transcript": "",
-    "kokoro_enabled": os.getenv("KOKORO_ENABLED", "1") == "1",
+    "kokoro_enabled": INDIC_TTS_ENABLED,
 }
 
 # ── WebSocket push manager ─────────────────────────────────────────────────────
@@ -1197,10 +1197,9 @@ def _open_ui(html_path: Path):
 # ── Module-level entrypoint ───────────────────────────────────────────────────
 
 async def entrypoint(ctx):
-    # Pre-warm Kokoro so first reply has no model-load delay
+    # Pre-warm Indic-TTS so first reply has no model-load delay
     try:
-        from vani.audio.kokoro_tts import _load_kokoro
-        _load_kokoro()
+        from vani.audio import synthesize_and_play
     except Exception:
         pass
 
@@ -1427,8 +1426,8 @@ async def entrypoint(ctx):
         @sess.on("user_started_speaking")
         def _on_user(*_):
             try:
-                from vani.audio.kokoro_tts import stop_playback
-                stop_playback()              # ADD THIS — stops Kokoro mid-sentence
+                from vani.audio import stop_playback
+                stop_playback()              # ADD THIS — stops Indic-TTS mid-sentence
             except Exception:
                 pass
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
@@ -1451,7 +1450,7 @@ async def entrypoint(ctx):
         def _on_item(event, *_):
             try:
                 from vani.reasoning.worker import say_to_user
-                from vani.audio.kokoro_tts import KOKORO_ENABLED
+                from vani.audio import INDIC_TTS_ENABLED
                 chat_msg = getattr(event, "item", None)
                 if chat_msg is None:
                     chat_msg = event
@@ -1463,12 +1462,15 @@ async def entrypoint(ctx):
                         _recently_spoken_fallback_texts.discard(text_strip)
                         return
                     _patched_state_update(dict(transcript=text))
-                    if KOKORO_ENABLED:
-                        last_user = _session_vars.get("last_user_transcript")
-                        if last_user is None or is_english(last_user):
+                    if INDIC_TTS_ENABLED:
+                        if not is_english(text):
+                            # Hinglish/Hindi response -> Speak using local Indic-TTS + RVC and mute WebRTC audio track
+                            _patched_state_update(dict(kokoro_enabled=True))
                             asyncio.create_task(say_to_user(text))
                         else:
-                            log.info("[Kokoro] Skipped speaking because last user input was not in English: %r", last_user)
+                            # English response -> Skip local TTS, unmute WebRTC audio track so Gemini Realtime speaks
+                            _patched_state_update(dict(kokoro_enabled=False))
+                            log.info("[Indic-TTS] Skipped speaking because response is English: %r", text)
             except Exception:
                 pass
 

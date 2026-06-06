@@ -429,9 +429,8 @@ async def say_to_user(text: str, limit: "int | None" = None):
     try:
         speech_text = _speech_safe_text(text, limit=limit)
         
-        # Check if Kokoro is using a Hindi voice to bypass English phonetic normalization
-        kokoro_voice = os.getenv("KOKORO_VOICE", "af_heart").lower()
-        is_hindi = kokoro_voice.startswith(("hf_", "hm_", "hi_"))
+        # Check if TTS is using a Hindi voice to bypass English phonetic normalization
+        is_hindi = True
         
         if is_hindi:
             speech_text = _normalize_for_tts(
@@ -451,21 +450,21 @@ async def say_to_user(text: str, limit: "int | None" = None):
         except Exception:
             pass
 
-        # ── KOKORO TTS — speaks ALL replies in one consistent voice ──────────
+        # ── INDIC-TTS — speaks ALL replies in one consistent voice ──────────
         try:
-            from vani.audio.kokoro_tts import synthesize_and_play, synthesize_and_play_chunked
+            from vani.audio import synthesize_and_play, synthesize_and_play_chunked
             if len(speech_text) > 120:
                 spoke = await synthesize_and_play_chunked(speech_text)
             else:
                 spoke = await synthesize_and_play(speech_text)
             if spoke:
-                return   # ✅ Kokoro spoke it — done
-            # Kokoro unavailable or failed → fall through to Gemini below
+                return   # ✅ TTS spoke it — done
+            # TTS unavailable or failed → fall through to Gemini below
         except ImportError:
-            pass   # kokoro-onnx not installed — silent fallback to Gemini
+            pass   # TTS dependencies not installed — silent fallback to Gemini
         except Exception as _ke:
-            logger.warning(f"[MESSAGING] Kokoro error, falling back to Gemini: {_ke}")
-        # ── END KOKORO TTS ───────────────────────────────────────────────────
+            logger.warning(f"[MESSAGING] TTS error, falling back to Gemini: {_ke}")
+        # ── END INDIC-TTS ───────────────────────────────────────────────────
 
         # generate_reply works with RealtimeModel; session.say() requires a separate TTS model
         try:

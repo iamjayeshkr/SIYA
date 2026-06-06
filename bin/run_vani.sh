@@ -81,6 +81,11 @@ required = [
     "langchain",
     "requests",
     "fuzzywuzzy",
+    "edge_tts",
+    "TTS",
+    "enchant",
+    "aksharamukha",
+    "pysbd",
 ]
 
 missing = []
@@ -115,45 +120,6 @@ if optional_missing:
     print("   VANI_INSTALL_DEPS=1 bin/run_vani.sh")
 PY
 fi
-
-# ── Check & Download Kokoro Assets ────────────────────────────────────────────
-echo "📦 Checking Kokoro TTS assets…"
-python - <<'PY'
-import os
-import sys
-import urllib.request
-from pathlib import Path
-
-cache_dir = Path.home() / ".cache" / "kokoro"
-cache_dir.mkdir(parents=True, exist_ok=True)
-onnx_path = cache_dir / "kokoro-v1.0.onnx"
-voices_path = cache_dir / "voices-v1.0.bin"
-
-def download_file(url, dest, expected_size):
-    if dest.exists() and dest.stat().st_size == expected_size:
-        return
-    print(f"   Downloading Kokoro asset: {dest.name} (~{expected_size / (1024*1024):.1f}MB)...")
-    try:
-        if dest.exists():
-            dest.unlink()
-        urllib.request.urlretrieve(url, dest)
-        print(f"   ✓ Downloaded {dest.name}")
-    except Exception as e:
-        print(f"   ✗ Failed to download {dest.name}: {e}")
-        if dest.exists():
-            dest.unlink()
-        sys.exit(1)
-
-download_file("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", onnx_path, 325532387)
-download_file("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path, 28214398)
-PY
-
-if [ $? -ne 0 ]; then
-    echo "❌ Failed to download Kokoro TTS assets."
-    exit 1
-fi
-echo "✅ Kokoro TTS assets ready"
-echo ""
 
 echo "✅ All packages ready"
 echo ""
