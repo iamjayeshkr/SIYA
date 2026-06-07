@@ -450,6 +450,18 @@ async def say_to_user(text: str, limit: "int | None" = None):
         except Exception:
             pass
 
+        # ── FILLER — plays instantly before TTS synthesis starts ─────────────
+        try:
+            from vani.audio.indic_tts_adapter import play_filler
+            asyncio.create_task(play_filler(
+                filler_type="auto",
+                response_len=len(speech_text)
+            ))
+            await asyncio.sleep(0.05)   # yield so filler Popen starts before CPU load
+        except Exception:
+            pass   # never block on filler failure
+        # ── END FILLER ───────────────────────────────────────────────────────
+
         # ── INDIC-TTS — speaks ALL replies in one consistent voice ──────────
         try:
             from vani.audio import synthesize_and_play, synthesize_and_play_chunked
@@ -459,14 +471,34 @@ async def say_to_user(text: str, limit: "int | None" = None):
                 spoke = await synthesize_and_play(speech_text)
             if spoke:
                 return   # ✅ TTS spoke it — done
-            # TTS unavailable or failed → fall through to Gemini below
         except ImportError:
-            pass   # TTS dependencies not installed — silent fallback to Gemini
+            pass
         except Exception as _ke:
-            logger.warning(f"[MESSAGING] TTS error, falling back to Gemini: {_ke}")
-        # ── END INDIC-TTS ───────────────────────────────────────────────────
+            logger.warning(f"[MESSAGING] TTS error: {_ke}")
 
-        # generate_reply works with RealtimeModel; session.say() requires a separate TTS model
+        # ── OFFLINE OS NATIVE TTS — speaks announcements without polluting Gemini history ──
+        try:
+            import sys
+            import subprocess
+            if sys.platform == "win32":
+                clean_text = speech_text.replace('"', '`"')
+                script = (
+                    f"Add-Type -AssemblyName System.Speech; "
+                    f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                    f'$s.Speak("{clean_text}")'
+                )
+                subprocess.Popen(
+                    ["powershell", "-NoProfile", "-Command", script],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return  # ✅ Spoke via Windows TTS
+            elif sys.platform == "darwin":
+                subprocess.Popen(["say", speech_text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return  # ✅ Spoke via macOS TTS
+        except Exception as _oe:
+            logger.warning(f"[MESSAGING] OS native TTS failed: {_oe}")
+
+        # ── GEMINI FALLBACK — fallback if both Indic-TTS and OS native TTS fail ──
         try:
             allow_interruptions = True
             if len(speech_text) > 120 or any(kw in speech_text.lower() for kw in [
@@ -486,6 +518,7 @@ async def say_to_user(text: str, limit: "int | None" = None):
             except Exception:
                 pass
 
+            # Safe generate_reply call without the instructions keyword to avoid compatibility issues
             handle = _session_ref.generate_reply(
                 user_input=speech_text,
                 allow_interruptions=allow_interruptions,

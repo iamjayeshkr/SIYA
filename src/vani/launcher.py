@@ -66,28 +66,47 @@ def _acquire_single_instance_lock() -> bool:
 
 def _existing_vani_pids() -> list[int]:
     """Return existing Vani app PIDs not owned by this launcher process."""
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", "vani.app"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-    except Exception:
-        return []
+    if IS_WINDOWS:
+        try:
+            script = 'Get-CimInstance Win32_Process | Where-Object { ($_.Name -like "*python*") -and ($_.CommandLine -like "*vani.app*") } | Select-Object -ExpandProperty ProcessId'
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            stdout = result.stdout
+        except Exception:
+            stdout = ""
+    else:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "vani.app"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            stdout = result.stdout
+        except Exception:
+            stdout = ""
 
     current_children = {
         proc.pid for proc in (agent_proc, app_proc)
         if proc is not None and proc.poll() is None
     }
     own_pid = os.getpid()
+    parent_pid = None
+    try:
+        parent_pid = os.getppid()
+    except Exception:
+        pass
     pids = []
-    for raw in result.stdout.split():
+    for raw in stdout.split():
         try:
             pid = int(raw)
         except ValueError:
             continue
-        if pid != own_pid and pid not in current_children:
+        if pid != own_pid and pid != parent_pid and pid not in current_children:
             pids.append(pid)
     return pids
 
@@ -100,13 +119,26 @@ def _port_open(port: int) -> bool:
     except OSError:
         pass
     try:
-        result = subprocess.run(
-            ["lsof", f"-ti:{port}"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        return bool(result.stdout.strip())
+        if IS_WINDOWS:
+            res = subprocess.run(
+                f'netstat -ano | findstr :{port}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            for line in res.stdout.splitlines():
+                if "LISTENING" in line:
+                    return True
+            return False
+        else:
+            result = subprocess.run(
+                ["lsof", f"-ti:{port}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            return bool(result.stdout.strip())
     except Exception:
         return False
 
@@ -127,16 +159,24 @@ def is_vani_running() -> bool:
 
     # Check if a worker process is active
     worker_ok = False
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", "vani.app.*--worker"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        worker_ok = bool(result.stdout.strip())
-    except Exception:
-        pass
+    if IS_WINDOWS:
+        try:
+            script = 'Get-CimInstance Win32_Process | Where-Object { ($_.Name -like "*python*") -and ($_.CommandLine -like "*vani.app*--worker*") } | Select-Object -ExpandProperty ProcessId'
+            res = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=3)
+            worker_ok = bool(res.stdout.strip())
+        except Exception:
+            pass
+    else:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "vani.app.*--worker"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            worker_ok = bool(result.stdout.strip())
+        except Exception:
+            pass
 
     return ui_ok and worker_ok
 
@@ -145,49 +185,87 @@ def start_processes():
     global agent_proc, app_proc
 
     if is_vani_running():
-        print("✅ Vani is already running. No new launch needed.")
+        print("✅ Siya is already running. No new launch needed.")
         _bring_window_to_front()
         return
 
     # Clean up any leftover stray worker/app processes to prevent conflict
-    print("🧹 Cleaning up stray Vani processes...")
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", "vani.app"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        own_pid = os.getpid()
-        for raw in result.stdout.split():
+    print("🧹 Cleaning up stray Siya processes...")
+    if IS_WINDOWS:
+        try:
+            # Kill processes matching 'vani.app' or 'vani.launcher'
+            exclude_pids = [os.getpid()]
             try:
-                pid = int(raw)
-                if pid != own_pid:
-                    print(f"  Killing stray process {pid}")
-                    os.kill(pid, signal.SIGKILL)
+                exclude_pids.append(os.getppid())
             except Exception:
                 pass
-    except Exception:
-        pass
-
-    # Clean up ports
-    for port in (5500, 8765, 8081):
+            exclude_cond = " -and ".join(f"$_.ProcessId -ne {pid}" for pid in exclude_pids)
+            script = (
+                f'Get-CimInstance Win32_Process | Where-Object {{ ($_.Name -like "*python*") -and ($_.CommandLine -like "*vani.app*" -or $_.CommandLine -like "*vani.launcher*") }} | '
+                f'ForEach-Object {{ if ({exclude_cond}) {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }} }}'
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+        except Exception:
+            pass
+            
+        # Clean up ports on Windows
+        for port in (5500, 8765, 8081):
+            try:
+                res = subprocess.run(
+                    f'netstat -ano | findstr :{port}',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                for line in res.stdout.splitlines():
+                    if "LISTENING" in line:
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            pid = int(parts[-1])
+                            if pid != os.getpid():
+                                print(f"  Killing port {port} process {pid} on Windows...")
+                                subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+    else:
         try:
-            res = subprocess.run(
-                ["lsof", f"-ti:{port}"],
+            result = subprocess.run(
+                ["pgrep", "-f", "vani.app"],
                 capture_output=True,
                 text=True,
                 timeout=2,
             )
-            for raw in res.stdout.split():
-                pid = int(raw.strip())
-                if pid != os.getpid():
-                    os.kill(pid, signal.SIGKILL)
+            own_pid = os.getpid()
+            for raw in result.stdout.split():
+                try:
+                    pid = int(raw)
+                    if pid != own_pid:
+                        print(f"  Killing stray process {pid}")
+                        os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
         except Exception:
             pass
 
+        # Clean up ports
+        for port in (5500, 8765, 8081):
+            try:
+                res = subprocess.run(
+                    ["lsof", f"-ti:{port}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                for raw in res.stdout.split():
+                    pid = int(raw.strip())
+                    if pid != os.getpid():
+                        os.kill(pid, signal.SIGKILL)
+            except Exception:
+                pass
+
     # Step 1: Start agent Worker (non-blocking)
-    print("🚀 Starting Vani agent Worker…")
+    print("🚀 Starting Siya agent Worker…")
     env = {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
@@ -205,7 +283,7 @@ def start_processes():
 
     # Step 2: Start UI immediately — no blocking wait
     # Agent registration (≈1-2s) happens in background; UI is ready first
-    print("🖥️  Starting Vani UI…")
+    print("🖥️  Starting Siya UI…")
     app_log = _open_log("vani_app.log")
     app_proc = subprocess.Popen(
         [PYTHON, "-m", "vani.app", "--no-agent"],
@@ -214,7 +292,7 @@ def start_processes():
         stderr=app_log,
         env=env,
     )
-    print("✅ Vani is running.")
+    print("✅ Siya is running.")
 
     # Step 3: Background thread waits for agent then dispatches
     # vani_app.py handles dispatch via _setup_room; this is a safety log only
@@ -245,7 +323,7 @@ def stop_processes():
         except Exception:
             pass
     _LOG_HANDLES.clear()
-    print("🛑 Vani stopped.")
+    print("🛑 Siya stopped.")
 
 
 def restart_processes():
@@ -255,7 +333,7 @@ def restart_processes():
 
 
 def wake_vani() -> str:
-    """Start or focus Vani and return the hotword acknowledgement."""
+    """Start or focus Siya and return the hotword acknowledgement."""
     try:
         from vani.audio.priority import vani_activated
         vani_activated()
@@ -331,7 +409,7 @@ def _bring_window_to_front():
         elif IS_WINDOWS:
             try:
                 import pygetwindow as gw
-                wins = gw.getWindowsWithTitle("Vani")
+                wins = gw.getWindowsWithTitle("Siya")
                 if wins:
                     wins[0].activate()
             except Exception:
@@ -365,7 +443,7 @@ def _build_tray_icon():
         if not is_vani_running():
             threading.Thread(target=start_processes, daemon=True).start()
         else:
-            print("Vani is already running.")
+            print("Siya is already running.")
 
     def on_stop(icon, item):
         stop_processes()
@@ -379,13 +457,13 @@ def _build_tray_icon():
         os._exit(0)
 
     menu = pystray.Menu(
-        pystray.MenuItem("▶  Start Vani",  on_start),
-        pystray.MenuItem("⏹  Stop Vani",   on_stop),
+        pystray.MenuItem("▶  Start Siya",  on_start),
+        pystray.MenuItem("⏹  Stop Siya",   on_stop),
         pystray.MenuItem("🔄  Restart",     on_restart),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("✕  Quit",         on_quit, default=False),
     )
-    return pystray.Icon("Vani", img, "Vani — AI Assistant", menu)
+    return pystray.Icon("Siya", img, "Siya — AI Assistant", menu)
 
 
 def _run_tray(icon):
@@ -455,7 +533,7 @@ def _mac_uninstall_launchagent():
 
 def _win_startup_shortcut_path():
     return Path(os.environ.get("APPDATA", "")) / \
-           "Microsoft/Windows/Start Menu/Programs/Startup/Vani.bat"
+           "Microsoft/Windows/Start Menu/Programs/Startup/Siya.bat"
 
 def _win_install_startup():
     bat  = f'@echo off\nset PYTHONPATH={SRC_ROOT}\ncd /d "{ROOT}"\nstart "" "{PYTHON}" -m vani.launcher\n'
@@ -474,7 +552,13 @@ def _win_uninstall_startup():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Vani Launcher")
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    parser = argparse.ArgumentParser(description="Siya Launcher")
     parser.add_argument("--install",   action="store_true")
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--autostart", action="store_true")
@@ -490,14 +574,14 @@ def main():
         return
 
     print("╔══════════════════════════════════╗")
-    print("║       Vani — Phase 3 Launch      ║")
+    print("║       Siya — Phase 3 Launch      ║")
     print("╚══════════════════════════════════╝")
     print(f"  Hotkey : {'Cmd' if IS_MAC else 'Ctrl'}+Shift+V")
     print(f"  Root   : {ROOT}")
     print()
 
     if not _acquire_single_instance_lock():
-        print("✅ Vani launcher is already running. No new launch needed.")
+        print("✅ Siya launcher is already running. No new launch needed.")
         return
 
     start_processes()

@@ -14,7 +14,7 @@ Fixes applied:
 # This is VANI's identity. No agent, planner, or tool should change this.
 # All task logic belongs in agents/, not here.
 VANI_PERSONA: dict = {
-    "name": "Vani",
+    "name": "Siya",
     "owner": "Rudra",
     "age": "18",
     "tone": "soft, friendly, warm",

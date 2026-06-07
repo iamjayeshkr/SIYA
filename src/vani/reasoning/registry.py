@@ -31,6 +31,7 @@ from vani.reasoning.tools.mentor_mode import (
 from vani.reasoning.screen import (
     read_screen, learn_this, learn_name, google_search, get_weather,
 )
+from vani.tools.windows_system import windows_system_control
 
 _TOOLS: dict = {
     "google_search":          google_search,
@@ -83,6 +84,7 @@ _TOOLS: dict = {
     "mentor_status":              mentor_status,
     "mentor_toggle_roast":        mentor_toggle_roast,
     "mentor_final_report":        mentor_final_report,
+    "windows_system_control":     windows_system_control,
 }
 
 # FIX 19: Aliases split into a separate dict so real tools are enumerable
@@ -367,4 +369,5 @@ mentor_quiz_answer(user_answer)            - Submit user answer for current conc
 mentor_status()                            - Check study session statistics and progress dashboard
 mentor_toggle_roast(level)                 - Change Roast Mode level (Off, Light, Medium, Savage)
 mentor_final_report()                      - Generate final study summary report once coverage is 100%
+windows_system_control(action, query)      - Windows system optimization, settings change, app force control, and low-level PowerShell commands
 """

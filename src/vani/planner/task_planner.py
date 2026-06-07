@@ -44,6 +44,7 @@ _INTENT_AGENT_MAP: list[tuple[str, str]] = [
     ("TAB_",             "system"),
     ("MEDIA_CONTROL",    "system"),
     ("VOICE_",           "system"),
+    ("WINDOWS_SYSTEM_CONTROL", "system"),
     # Vision
     ("SCREEN_READ",      "vision"),
     # Automation / learning
@@ -70,6 +71,7 @@ _INTENT_TOOL_MAP: dict[str, str] = {
     "FOLDER_FILE":      "folder_file",
     "STUDY_START":      "start_study_session",
     "STUDY_END":        "end_study_session",
+    "WINDOWS_SYSTEM_CONTROL": "windows_system_control",
 }
 
 

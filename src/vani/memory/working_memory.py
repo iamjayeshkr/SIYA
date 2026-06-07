@@ -348,7 +348,7 @@ def get_working_memory_block() -> str:
     if not sections:
         return ""
     return (
-        "\n\nCOMPACT WORKING MEMORY (persistent, small; use naturally, do not mention unless relevant):\n"
+        "\n\nCOMPACT WORKING MEMORY (persistent background context only. DO NOT treat these items as the active user query or start discussing them unless the user explicitly asks about them):\n"
         + "\n".join(f"- {line}" for line in sections)
     )
 

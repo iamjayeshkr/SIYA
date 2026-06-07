@@ -218,24 +218,60 @@ def _generate_hmm_filler(cache_dir: Path):
         _cache["__filler_hmm__"] = str(hmm_path)
         return
         
-    if _engine is None:
-        return
-        
+    if _engine is not None:
+        try:
+            log.info("[IndicTTS] Synthesizing hmm filler...")
+            audio = _engine.infer_from_text("Hmm", lang=VANI_TTS_LANG, speaker_name=VANI_TTS_SPEAKER)
+            # Trim to 300ms
+            max_samples = int(0.3 * SAMPLE_RATE)
+            trimmed_audio = audio[:max_samples]
+            # Normalize
+            max_val = np.max(np.abs(trimmed_audio))
+            if max_val > 0:
+                trimmed_audio = trimmed_audio / max_val
+            wav_write(str(hmm_path), SAMPLE_RATE, (trimmed_audio * 32767).astype(np.int16))
+            _cache["__filler_hmm__"] = str(hmm_path)
+            log.info("[IndicTTS] Generated hmm filler sound via TTS.")
+            return
+        except Exception as e:
+            log.error(f"[IndicTTS] Failed to generate hmm filler via TTS: {e}")
+            
+    # Fallback: Generate a high-quality human-like hum mathematically
     try:
-        log.info("[IndicTTS] Synthesizing hmm filler...")
-        audio = _engine.infer_from_text("Hmm", lang=VANI_TTS_LANG, speaker_name=VANI_TTS_SPEAKER)
-        # Trim to 300ms
-        max_samples = int(0.3 * SAMPLE_RATE)
-        trimmed_audio = audio[:max_samples]
+        log.info("[IndicTTS] Generating mathematical hmm filler...")
+        duration = 1.0  # 1 second of hum
+        t = np.linspace(0, duration, int(SAMPLE_RATE * duration), endpoint=False)
+        
+        # Fundamental frequency at 120Hz (warm pitch) + harmonics
+        f0 = 120.0
+        wave = (
+            1.0 * np.sin(2 * np.pi * f0 * t) +
+            0.5 * np.sin(2 * np.pi * 2 * f0 * t) +
+            0.2 * np.sin(2 * np.pi * 3 * f0 * t)
+        )
+        
+        # Envelope: fade-in (0.2s), steady, fade-out (0.5s)
+        fade_in_len = int(0.2 * SAMPLE_RATE)
+        fade_out_len = int(0.5 * SAMPLE_RATE)
+        
+        envelope = np.ones(len(t))
+        envelope[:fade_in_len] = np.linspace(0, 1, fade_in_len)
+        envelope[-fade_out_len:] = np.linspace(1, 0, fade_out_len)
+        
+        # Add soft breathy noise for realism
+        noise = np.random.normal(0, 0.05, len(t))
+        hum_audio = (wave + noise) * envelope
+        
         # Normalize
-        max_val = np.max(np.abs(trimmed_audio))
+        max_val = np.max(np.abs(hum_audio))
         if max_val > 0:
-            trimmed_audio = trimmed_audio / max_val
-        wav_write(str(hmm_path), SAMPLE_RATE, (trimmed_audio * 32767).astype(np.int16))
+            hum_audio = hum_audio / max_val
+            
+        wav_write(str(hmm_path), SAMPLE_RATE, (hum_audio * 32767).astype(np.int16))
         _cache["__filler_hmm__"] = str(hmm_path)
-        log.info("[IndicTTS] Generated hmm filler sound.")
+        log.info("[IndicTTS] Generated mathematical hmm filler sound successfully.")
     except Exception as e:
-        log.error(f"[IndicTTS] Failed to generate hmm filler: {e}")
+        log.error(f"[IndicTTS] Failed to generate mathematical hmm filler: {e}")
 
 
 def _warm_cache_thread():
@@ -367,6 +403,15 @@ if INDIC_TTS_ENABLED:
     threading.Thread(target=_load_engine, daemon=True).start()
     threading.Thread(target=_load_rvc_model, daemon=True).start()
     threading.Thread(target=_warm_cache_thread, daemon=True).start()
+else:
+    try:
+        # Generate offline/mathematical fillers at startup even if Indic-TTS is disabled
+        cache_dir = Path(VANI_CACHE_DIR) / "tts_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        _generate_breath_filler(cache_dir)
+        _generate_hmm_filler(cache_dir)
+    except Exception as e:
+        log.warning(f"[IndicTTS] Offline filler generation failed: {e}")
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -453,15 +498,54 @@ def _synthesize_to_wav(text: str) -> str | None:
 
 
 def _play_filler():
+    """Internal filler — called inside synthesize_and_play BEFORE engine wait."""
     filler = os.getenv("VANI_TTS_FILLER", "breath")
     if filler == "none":
         return
     filler_path = _cache.get(f"__filler_{filler}__")
     if filler_path:
         try:
-            subprocess.Popen(["afplay", "-v", "0.3", filler_path])
+            subprocess.Popen(["afplay", filler_path],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
         except Exception:
             pass
+
+
+async def play_filler(filler_type: str = "auto", response_len: int = 0) -> bool:
+    """
+    Public async API — play a filler sound INSTANTLY before TTS synthesis.
+    Called from say_to_user() in worker.py before synthesis begins.
+
+    filler_type "breath"  → 80ms soft inhale (numpy generated, always fast)
+    filler_type "hmm"     → ~1s warm hum sound (mathematical or synthesized)
+    filler_type "auto"    → breath if response_len < 60, hmm otherwise
+    Returns True if played, False if cache miss. Never raises.
+    """
+    try:
+        if filler_type == "auto":
+            filler_type = "hmm" if response_len >= 60 else "breath"
+
+        key = f"__filler_{filler_type}__"
+        wav_path = _cache.get(key) or _cache.get("__filler_breath__")
+        if not wav_path:
+            return False
+
+        if sys.platform == "win32":
+            import winsound
+            # winsound.PlaySound plays completely asynchronously on Windows
+            winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return True
+        else:
+            subprocess.Popen(
+                ["afplay", wav_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+    except Exception as e:
+        log.debug(f"[IndicTTS] play_filler failed (non-fatal): {e}")
+        return False
 
 
 def _play_wav_blocking(wav_path: str) -> bool:
@@ -540,34 +624,44 @@ async def synthesize_and_play(text: str) -> bool:
                 sentences.insert(1, rest)
             break
             
+    # ── Filler BEFORE engine wait — user hears something instantly ───────────
     _play_filler()
-    
+
     if not _engine_ready.is_set():
         log.info("[IndicTTS] Waiting for engine to initialize...")
         ready = _engine_ready.wait(timeout=15)
         if not ready or _engine is None:
             log.warning("[IndicTTS] Engine failed to initialize in time.")
             return False
-            
+
     latencies = []
+    # ── Double-buffer: synthesize sentence i+1 while playing sentence i ──────
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = []
-        for s in sentences:
+        # Prefetch first 2 sentences immediately
+        for s in sentences[:2]:
             futures.append(executor.submit(_synthesize_to_wav, s))
-            
+        # Pad remaining slots with None — filled lazily below
+        for _ in sentences[2:]:
+            futures.append(None)
+
         for i, s in enumerate(sentences):
             if _stop_requested:
                 break
-                
+
+            # While playing sentence i, kick off synthesis of sentence i+2
+            if i + 2 < len(sentences) and futures[i + 2] is None:
+                futures[i + 2] = executor.submit(_synthesize_to_wav, sentences[i + 2])
+
             start_wait = time.time()
             wav_path = futures[i].result()
             wait_time_ms = int((time.time() - start_wait) * 1000)
-            
+
             if s in _cache:
                 latencies.append(f"s{i+1}=0ms(cache)")
             else:
                 latencies.append(f"s{i+1}={wait_time_ms}ms")
-                
+
             if wav_path:
                 _play_wav_blocking(wav_path)
                 if wav_path not in _cache.values() and "tts_cache" not in wav_path:
@@ -575,7 +669,7 @@ async def synthesize_and_play(text: str) -> bool:
                         os.unlink(wav_path)
                     except Exception:
                         pass
-                        
+
     latencies_summary = " ".join(latencies)
     total_dur_ms = int((time.time() - start_total) * 1000)
     log.info(f"[IndicTTS] {latencies_summary} | total_time={total_dur_ms}ms | {len(sentences)} sentences")
@@ -583,4 +677,103 @@ async def synthesize_and_play(text: str) -> bool:
 
 
 async def synthesize_and_play_chunked(text: str) -> bool:
-    return await synthesize_and_play(text)
+    global _stop_requested, _playback_proc
+    if not _engine_ready.is_set():
+        ready = _engine_ready.wait(timeout=15)
+        if not ready or _engine is None:
+            return False
+    
+    sentences = _split_sentences(text)
+    if not sentences:
+        return False
+    
+    _stop_requested = False
+    loop = asyncio.get_event_loop()
+    
+    def _synth(sentence: str) -> str | None:
+        """Synthesize one sentence → returns wav file path or None."""
+        if _stop_requested:
+            return None
+        # Check cache first
+        if sentence in _cache:
+            return _cache[sentence]
+        if _engine is None:
+            return None
+        try:
+            with _engine_lock:
+                audio = _engine.infer_from_text(
+                    sentence, lang=VANI_TTS_LANG, 
+                    speaker_name=VANI_TTS_SPEAKER
+                )
+            max_val = np.max(np.abs(audio))
+            if max_val > 0:
+                audio = audio / max_val
+            tmp = tempfile.mktemp(suffix=".wav", dir=str(Path(VANI_CACHE_DIR) / "tts_cache"))
+            wav_write(tmp, SAMPLE_RATE, (audio * 32767).astype(np.int16))
+            
+            # Post-process with RVC if enabled
+            try:
+                converted = _convert_voice_rvc(tmp)
+                if converted != tmp:
+                    try:
+                        os.unlink(tmp)
+                    except Exception:
+                        pass
+                    tmp = converted
+            except Exception as re:
+                log.error(f"[RVC] Voice conversion post-processing failed: {re}")
+                
+            return tmp
+        except Exception as e:
+            log.error(f"[IndicTTS] Synth error: {e}")
+            return None
+    
+    # Double-buffer: synthesize next while playing current
+    executor = ThreadPoolExecutor(max_workers=2)
+    
+    # Kick off sentence 0 synthesis immediately
+    futures = []
+    for i, sentence in enumerate(sentences[:2]):  # prefetch first 2
+        futures.append(loop.run_in_executor(executor, _synth, sentence))
+    
+    played_any = False
+    for i, sentence in enumerate(sentences):
+        # Prefetch next+1 if exists
+        if i + 2 < len(sentences):
+            futures.append(
+                loop.run_in_executor(executor, _synth, sentences[i + 2])
+            )
+        
+        # Wait for current sentence
+        wav_path = await futures[i]
+        
+        if _stop_requested:
+            break
+        if not wav_path:
+            continue
+        
+        # Play current sentence (blocking in executor so asyncio isn't blocked)
+        def _play(path):
+            global _playback_proc
+            try:
+                _playback_proc = subprocess.Popen(
+                    ["afplay", path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                _playback_proc.wait()
+            except Exception as e:
+                log.error(f"[IndicTTS] Playback error: {e}")
+        
+        await loop.run_in_executor(None, _play, wav_path)
+        played_any = True
+        
+        # Delete temporary WAV chunk if not cached
+        if wav_path not in _cache.values():
+            try:
+                os.unlink(wav_path)
+            except Exception:
+                pass
+    
+    executor.shutdown(wait=False)
+    return played_any

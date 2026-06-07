@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Vani</title>
+<title>Siya</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;600;700&family=Exo+2:ital,wght@0,200;0,300;0,400;1,200&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <script src="/livekit-client.umd.min.js"></script>
@@ -783,7 +783,7 @@ body.connected .status-txt { color: var(--green); }
   <button id="start-btn"
           style="display:none;margin-top:24px;padding:12px 32px;background:#7c3aed;
                  color:white;border:none;border-radius:24px;font-size:16px;cursor:pointer;">
-    ▶ Tap to Hear Vani
+    ▶ Tap to Hear Siya
   </button>
 </div>
 
@@ -834,12 +834,12 @@ body.connected .status-txt { color: var(--green); }
       <div class="dot"></div>
       <div class="status-txt" id="status-text">Connecting…</div>
     </div>
-    <div class="name-strip">Vani · Personal AI</div>
+    <div class="name-strip">Siya · Personal AI</div>
   </div>
 </div>
 
 <!-- Text panel toggle button -->
-<button id="panel-toggle" title="Type to Vani" onclick="togglePanel()">⌨️</button>
+<button id="panel-toggle" title="Type to Siya" onclick="togglePanel()">⌨️</button>
 
 <!-- Text panel -->
 <div id="text-panel">
@@ -849,9 +849,9 @@ body.connected .status-txt { color: var(--green); }
     <input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif">
     <button id="photo-btn" onclick="choosePhoto()" title="Review photo/image">📷</button>
     <input id="doc-file" type="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.py,.js,.ts,.html,.css,.xml,.docx,.pdf,.rtf,.doc,.odt">
-    <button id="doc-btn" onclick="chooseDocument()" title="Upload PDF — Vani will memorise it for 2 days">📄</button>
+    <button id="doc-btn" onclick="chooseDocument()" title="Upload PDF — Siya will memorise it for 2 days">📄</button>
     <span id="doc-badge" style="display:none;font-size:10px;color:#4ade80;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" title="Click to clear" onclick="clearDocument()">📚 ✕</span>
-    <input id="msg-input" type="text" placeholder="Type to Vani…" autocomplete="off"
+    <input id="msg-input" type="text" placeholder="Type to Siya…" autocomplete="off"
            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}">
     <button id="tts-stop-btn" onclick="stopBrowserTTS()" title="Stop speaking">■</button>
     <button id="send-btn" onclick="sendMessage()" title="Send">↑</button>
@@ -1125,7 +1125,7 @@ async function unlockRoomAudio(room) {
 
 function showAudioUnlock(room) {
   overlay.classList.remove('hidden');
-  connMsg.textContent = 'Tap to hear Vani';
+  connMsg.textContent = 'Tap to hear Siya';
   startBtn.style.display = 'block';
   startBtn.onclick = async () => {
     startBtn.disabled = true;
@@ -1562,7 +1562,7 @@ async function sendMessage() {
     setAvatarState('listening');   
   } catch(e) {
     thinkRow.remove();
-    addBubble('❌ Connection error — Vani agent running hai?', 'vani');
+    addBubble('❌ Connection error — Siya agent running hai?', 'vani');
     setAvatarState('listening');
   } finally {
     sendBtn.disabled = false;
@@ -1609,7 +1609,7 @@ photoFile.addEventListener('change', async () => {
     setAvatarState('listening');
   } catch(e) {
     thinkRow.remove();
-    addBubble('❌ Image upload/review failed — Vani agent running hai?', 'vani');
+    addBubble('❌ Image upload/review failed — Siya agent running hai?', 'vani');
     setAvatarState('listening');
   } finally {
     photoBtn.disabled = false;
@@ -1645,7 +1645,7 @@ docFile.addEventListener('change', async () => {
     setAvatarState('listening');
   } catch(e) {
     thinkRow.remove();
-    addBubble('❌ Document upload/read failed — Vani agent running hai?', 'vani');
+    addBubble('❌ Document upload/read failed — Siya agent running hai?', 'vani');
     setAvatarState('listening');
   } finally {
     photoBtn.disabled = false;
@@ -1680,7 +1680,7 @@ async function refreshDocBadge() {
 }
 
 async function clearDocument() {
-  if (!confirm("Remove this document from Vani memory?")) return;
+  if (!confirm("Remove this document from Siya memory?")) return;
   try {
     await fetch('http://127.0.0.1:5500/clear_document', { method: 'POST' });
     docBadge.style.display = 'none';
@@ -1894,7 +1894,7 @@ docFile.addEventListener('change', () => {
 <script>
 /* ── Teach panel JS ──────────────────────────────────────────────── */
 (function() {
-  // Mermaid init for dark theme matching Vani's UI
+  // Mermaid init for dark theme matching Siya's UI
   mermaid.initialize({
     theme: 'dark',
     themeVariables: {
@@ -2035,7 +2035,7 @@ docFile.addEventListener('change', () => {
 
 
 <!-- FAB button -->
-<button id="plugin-fab" onclick="togglePluginPanel()" title="Vani Plugins — Superpowers!">
+<button id="plugin-fab" onclick="togglePluginPanel()" title="Siya Plugins — Superpowers!">
   🔌
   <span class="plugin-badge" id="plugin-badge">0</span>
 </button>
@@ -2045,10 +2045,10 @@ docFile.addEventListener('change', () => {
   <!-- Header -->
   <div class="pp-header">
     <div class="pp-title-row">
-      <span class="pp-title">⚡ Vani Plugins</span>
+      <span class="pp-title">⚡ Siya Plugins</span>
       <button class="pp-close" onclick="togglePluginPanel()">✕</button>
     </div>
-    <div class="pp-subtitle">Supercharge Vani with apps & tools</div>
+    <div class="pp-subtitle">Supercharge Siya with apps & tools</div>
   </div>
 
   <!-- Tab bar -->
@@ -2130,7 +2130,7 @@ docFile.addEventListener('change', () => {
       <div style="font-size:0.75rem;color:#64748b;line-height:1.7">
         1. Enable the plugins you want in the Plugins tab<br>
         2. Set Obsidian vault path above (if using Obsidian)<br>
-        3. Say trigger phrases to Vani or use the Run tab<br>
+        3. Say trigger phrases to Siya or use the Run tab<br>
         4. Memory plugin is ON by default — no setup needed
       </div>
     </div>
@@ -2420,7 +2420,7 @@ docFile.addEventListener('change', () => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({query, messages: _conversationMessages.slice(-20)}),
           });
-          // Result will come through normal Vani voice response
+          // Result will come through normal Siya voice response
         } catch(e) {}
         break;
       }
@@ -2586,7 +2586,7 @@ docFile.addEventListener('change', () => {
 </style>
 
 <!-- FAB button -->
-<button id="mentor-toggle" onclick="toggleMentorConsole()" title="Vani Document Mentor — Go Deep!">
+<button id="mentor-toggle" onclick="toggleMentorConsole()" title="Siya Document Mentor — Go Deep!">
   🎓
 </button>
 
@@ -2596,7 +2596,7 @@ docFile.addEventListener('change', () => {
   <div class="mc-header">
     <div class="mc-title-row">
       <span class="mc-icon">🎓</span>
-      <span class="mc-title">Vani Study Mentor</span>
+      <span class="mc-title">Siya Study Mentor</span>
     </div>
     <button class="mc-close" onclick="toggleMentorConsole()">✕</button>
   </div>
@@ -2721,7 +2721,7 @@ window.mentorStartSession = async function() {
     const data = await r.json();
     if (data.ok) {
       refreshMentorStatus();
-      addBubble(`Vani, start study session on this document with ${roast} roast!`, 'user');
+      addBubble(`Siya, start study session on this document with ${roast} roast!`, 'user');
       addBubble(`Study session loaded. Pehla topic start karne ke liye 'Next Concept' click karo ya bolo 'teach next concept'.`, 'vani');
     } else {
       alert("Error: " + data.reply);

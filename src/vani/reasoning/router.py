@@ -289,6 +289,89 @@ def _router_classify(query: str):
     q = query.strip()
     ql = q.lower()
 
+    # ── Windows Low-Level System Control ──
+    # 1. System Status / Diagnostics
+    if any(w in ql for w in ["system status", "system diagnostics", "cpu usage", "ram usage", "system resources", "admin check", "permissions check", "low level access"]):
+        return "WINDOWS_SYSTEM_CONTROL", ("system_status", "")
+
+    # 2. Optimization / Cleanup
+    # Matches "optimize windows", "optimize karo window ko", "window optimize", "system clean karo", "saaf karo pc"
+    is_opt = any(w in ql for w in ["optimize", "optmise", "clean", "saaf", "saf", "optimization", "cleaner"])
+    is_sys = any(w in ql for w in ["window", "system", "pc", "laptop", "comp", "computer"])
+    if is_opt and is_sys:
+        return "WINDOWS_SYSTEM_CONTROL", ("optimize", "all")
+
+    # 3. Setting modification
+    if "dark mode" in ql or "theme black" in ql or "enable dark theme" in ql or "dark theme" in ql:
+        return "WINDOWS_SYSTEM_CONTROL", ("change_setting", "dark")
+    if "light mode" in ql or "theme white" in ql or "enable light theme" in ql or "light theme" in ql:
+        return "WINDOWS_SYSTEM_CONTROL", ("change_setting", "light")
+    
+    if "power plan" in ql or "performance mode" in ql or "power saver" in ql or "balanced mode" in ql or "battery saver" in ql:
+        if "performance" in ql or "high" in ql:
+            p = "performance"
+        elif "saver" in ql or "low" in ql or "battery" in ql:
+            p = "saver"
+        else:
+            p = "balanced"
+        return "WINDOWS_SYSTEM_CONTROL", ("change_setting", f"power {p}")
+
+    # Brightness control (handles typos: bright, brigt, chamkil, light)
+    is_bright = any(w in ql for w in ["brightness", "brigtness", "brightnes", "bright", "brigt", "chamkil", "light"])
+    if is_bright and not ("dark" in ql or "theme" in ql):  # avoid dark theme conflict
+        match = re.search(r"(\d+)", ql)
+        if match:
+            pct = match.group(1)
+            return "WINDOWS_SYSTEM_CONTROL", ("change_setting", f"brightness {pct}")
+        elif "down" in ql or "kam" in ql or "ghata" in ql or "decrease" in ql:
+            return "WINDOWS_SYSTEM_CONTROL", ("change_setting", "brightness down")
+        elif "up" in ql or "badha" in ql or "increase" in ql or "tez" in ql:
+            return "WINDOWS_SYSTEM_CONTROL", ("change_setting", "brightness up")
+        else:
+            # default general control request
+            return "WINDOWS_SYSTEM_CONTROL", ("change_setting", "brightness 50")
+
+    if "sleep timeout" in ql or "screen timeout" in ql or "turn off screen" in ql:
+        match = re.search(r"(\d+)", ql)
+        mins = match.group(1) if match else "15"
+        return "WINDOWS_SYSTEM_CONTROL", ("change_setting", f"sleep {mins}")
+
+    if "wifi" in ql or "wi-fi" in ql or "network adapter" in ql:
+        if "disable" in ql or "off" in ql or "band" in ql:
+            act = "disable wifi"
+        else:
+            act = "enable wifi"
+        return "WINDOWS_SYSTEM_CONTROL", ("change_setting", act)
+
+    # 4. Command Execution
+    if "execute command" in ql or "run command" in ql or "run powershell" in ql or "run cmd" in ql or ql.startswith("powershell ") or ql.startswith("cmd "):
+        cmd_part = q
+        for prefix in ["execute command", "run command", "run powershell", "run cmd", "powershell", "cmd"]:
+            if ql.startswith(prefix):
+                cmd_part = q[len(prefix):].strip()
+                break
+        return "WINDOWS_SYSTEM_CONTROL", ("execute_command", cmd_part)
+
+    # 5. Force Close App
+    if "force close" in ql or "kill process" in ql or "force quit" in ql or "force kill" in ql:
+        app_to_kill = q
+        for prefix in ["force close", "kill process", "force quit", "force kill"]:
+            if ql.startswith(prefix):
+                app_to_kill = q[len(prefix):].strip()
+                break
+        return "WINDOWS_SYSTEM_CONTROL", ("force_close_app", app_to_kill)
+
+    # 6. Force Open App (with optional admin privileges)
+    if "force open" in ql or "open as admin" in ql or "run as admin" in ql:
+        app_to_open = q
+        as_admin = "as admin" in ql or "admin" in ql
+        for prefix in ["force open", "open as admin", "run as admin"]:
+            if ql.startswith(prefix):
+                app_to_open = q[len(prefix):].strip()
+                break
+        param = f"{app_to_open} admin" if as_admin else app_to_open
+        return "WINDOWS_SYSTEM_CONTROL", ("force_open_app", param)
+
     # ── Voice enrollment intents (checked early — high priority) ──────────────
     if _VOICE_DELETE_RE.search(q):
         return "VOICE_DELETE", {}
@@ -716,6 +799,10 @@ async def _dispatch_intent(intent: str, data, query: str) -> str:
         "SEARCH_DEFINE", "SEARCH_TIMER", "SEARCH_FLIGHT", "SEARCH_STOCK",
     }:
         return await google_search.ainvoke({"query": str(data) if data else query})
+    elif intent == "WINDOWS_SYSTEM_CONTROL":
+        action, parameter = data
+        from vani.tools.windows_system import windows_system_control
+        return await windows_system_control.ainvoke({"action": action, "query": parameter})
     elif intent == "APP_OPEN":
         return await open_application.ainvoke({"app_name": data})
     elif intent == "FOLDER_FILE":

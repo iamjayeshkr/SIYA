@@ -45,6 +45,7 @@ class SystemAgent(BaseAgent):
         "press_hotkey_tool",
         "swipe_gesture_tool",
         "talking_tom_control",
+        "windows_system_control",
     ]
 
     async def handle(self, intent: str, data, query: str) -> str:

@@ -35,36 +35,49 @@ STARTING_REPLY = WAKE_ACK_REPLY
 
 
 _WAKE_PHRASES = (
-    # ── Single-word triggers (highest priority — just say "vani") ──────────
-    "vani",
-    "vaani",
+    # ── Single-word triggers (highest priority — just say "siya") ──────────
+    "siya",
+    "shiya",
+    "seeya",
     # ── Short triggers ─────────────────────────────────────────────────────
-    "hey vani",
-    "hey vaani",
-    "ok vani",
-    "okay vani",
-    "ok vaani",
-    "hello vani",
-    "hello vaani",
-    "vani sun",
-    "vaani sun",
+    "hey siya",
+    "hey shiya",
+    "hey seeya",
+    "ok siya",
+    "okay siya",
+    "ok shiya",
+    "ok seeya",
+    "hello siya",
+    "hello shiya",
+    "hello seeya",
+    "siya sun",
+    "shiya sun",
+    "seeya sun",
     # ── Full wake phrases ──────────────────────────────────────────────────
-    "wake up vani",
-    "wake up vaani",
-    "wake vani",
-    "wake vaani",
-    "activate vani",
-    "activate vaani",
-    "vani activate",
-    "vaani activate",
-    "vani ko activate",
-    "vaani ko activate",
-    "utho vani",
-    "utho vaani",
-    "uth ja vani",
-    "uth ja vaani",
-    "vani uth ja",
-    "vaani uth ja",
+    "wake up siya",
+    "wake up shiya",
+    "wake up seeya",
+    "wake siya",
+    "wake shiya",
+    "wake seeya",
+    "activate siya",
+    "activate shiya",
+    "activate seeya",
+    "siya activate",
+    "shiya activate",
+    "seeya activate",
+    "siya ko activate",
+    "shiya ko activate",
+    "seeya ko activate",
+    "utho siya",
+    "utho shiya",
+    "utho seeya",
+    "uth ja siya",
+    "uth ja shiya",
+    "uth ja seeya",
+    "siya uth ja",
+    "shiya uth ja",
+    "seeya uth ja",
 )
 
 
@@ -80,13 +93,13 @@ def is_wake_command(text: str) -> bool:
         return False
     
     for phrase in _WAKE_PHRASES:
-        if phrase in ("vani", "vaani"):
+        if phrase in ("siya", "shiya", "seeya"):
             if normalized == phrase:
                 return True
         else:
             if phrase in normalized:
                 # Specific allow-list for common variations like "kar do"
-                if phrase in ("vani ko activate", "vaani ko activate") and "kar do" in normalized:
+                if phrase in ("siya ko activate", "shiya ko activate", "seeya ko activate") and "kar do" in normalized:
                     return True
                 # Ensure it's a clean activation rather than a compound query
                 if normalized == phrase or normalized.startswith(phrase + " ") or normalized.endswith(" " + phrase):
@@ -95,3 +108,4 @@ def is_wake_command(text: str) -> bool:
                     if not any(qw in words for qw in query_words):
                         return True
     return False
+

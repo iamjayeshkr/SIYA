@@ -153,12 +153,12 @@ def _do_wake(source: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 WAKE_KEYWORDS = [
-    "vani", "vanni", "vaani",
-    "hey vani", "hey vanni", "hey vaani",
-    "ok vani", "okay vani",
-    "hello vani",
-    "vani sun", "vani uth ja",
-    "wake up vani",
+    "siya", "shiya", "seeya",
+    "hey siya", "hey shiya", "hey seeya",
+    "ok siya", "okay siya", "ok seeya",
+    "hello siya", "hello shiya", "hello seeya",
+    "siya sun", "shiya sun", "seeya sun",
+    "wake up siya", "wake up shiya", "wake up seeya",
 ]
 
 _vosk_recognizer = None
@@ -339,15 +339,15 @@ def _start_shared_mic_stream() -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 WAKE_COMMANDS = [
-    "vani", "vaani", "vanni",
-    "wake up vani", "wake up vaani",
-    "hey vani", "hey vaani",
-    "ok vani", "okay vani",
-    "vani sun", "vaani sun",
-    "utho vani", "utho vaani",
-    "vani uth ja", "vaani uth ja",
-    "activate vani", "activate vaani",
-    "hello vani", "hello vaani",
+    "siya", "shiya", "seeya",
+    "wake up siya", "wake up shiya", "wake up seeya",
+    "hey siya", "hey shiya", "hey seeya",
+    "ok siya", "okay siya", "ok seeya",
+    "siya sun", "shiya sun", "seeya sun",
+    "utho siya", "utho shiya", "utho seeya",
+    "siya uth ja", "shiya uth ja", "seeya uth ja",
+    "activate siya", "activate shiya", "activate seeya",
+    "hello siya", "hello shiya", "hello seeya",
 ]
 
 
@@ -511,8 +511,8 @@ def run_listener() -> None:
     else:
         log.info("[wake] Clap detector unavailable (mic stream not open)")
 
-    _notify_mac("Vani", "Always-on wake listener active — say 'Vani' or double-clap!")
-    log.info("[wake] Listener ready. Say 'Vani' or double-clap to wake.")
+    _notify_mac("Siya", "Always-on wake listener active — say 'Siya' or double-clap!")
+    log.info("[wake] Listener ready. Say 'Siya' or double-clap to wake.")
 
     # Keep the main thread alive (mic stream callbacks run on sounddevice's thread)
     try:

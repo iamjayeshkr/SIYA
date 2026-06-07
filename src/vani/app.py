@@ -33,6 +33,82 @@ import hashlib
 import base64
 import struct
 import socket
+
+# ── DNS fallback patch for systems with broken IPv6 DNS (e.g. iPhone Hotspot) ─
+_orig_getaddrinfo = socket.getaddrinfo
+
+def _dns_query_udp(hostname, dns_server="8.8.8.8"):
+    # Header: ID, Flags (0x0100 for recursion desired), Questions, Answer RRs, Authority RRs, Additional RRs
+    header = struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+    # Question: Name (encoded as label lengths and strings), Type (1 = A), Class (1 = IN)
+    qname = b""
+    for part in hostname.split("."):
+        if not part:
+            continue
+        qname += bytes([len(part)]) + part.encode("utf-8")
+    qname += b"\x00"
+    question = qname + struct.pack("!HH", 1, 1)
+    packet = header + question
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(2.0)
+    try:
+        sock.sendto(packet, (dns_server, 53))
+        data, _ = sock.recvfrom(512)
+    except Exception:
+        return []
+    finally:
+        sock.close()
+        
+    try:
+        ancount = struct.unpack("!H", data[6:8])[0]
+        if ancount == 0:
+            return []
+        offset = 12 + len(question)
+        ips = []
+        for _ in range(ancount):
+            if offset >= len(data):
+                break
+            if (data[offset] & 0xC0) == 0xC0:
+                offset += 2
+            else:
+                while data[offset] != 0:
+                    offset += data[offset] + 1
+                offset += 1
+            atype, aclass, attl, ardlength = struct.unpack("!HHIH", data[offset:offset+10])
+            offset += 10
+            rdata = data[offset:offset+ardlength]
+            offset += ardlength
+            if atype == 1 and ardlength == 4:
+                ips.append(socket.inet_ntoa(rdata))
+        return ips
+    except Exception:
+        return []
+
+def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    try:
+        return _orig_getaddrinfo(host, port, family, type, proto, flags)
+    except socket.gaierror as e:
+        if host and ("livekit" in host or "google" in host):
+            try:
+                ips = _dns_query_udp(host, "8.8.8.8")
+                if not ips:
+                    ips = _dns_query_udp(host, "1.1.1.1")
+                if ips:
+                    results = []
+                    for ip in ips:
+                        if family == 0 or family == socket.AF_INET:
+                            r_type = type if type != 0 else socket.SOCK_STREAM
+                            r_proto = proto if proto != 0 else socket.IPPROTO_TCP
+                            results.append((socket.AF_INET, r_type, r_proto, '', (ip, port)))
+                    if results:
+                        return results
+            except Exception:
+                pass
+        raise e
+
+socket.getaddrinfo = _patched_getaddrinfo
+# ──────────────────────────────────────────────────────────────────────────────
 from pathlib import Path
 from dotenv import load_dotenv
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -40,6 +116,21 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from vani.config import ASSETS_ROOT, PACKAGE_ROOT, PROJECT_ROOT, INDIC_TTS_ENABLED
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
+
+try:
+    from livekit.plugins import google
+except ImportError:
+    google = None
+
+try:
+    from livekit.plugins import noise_cancellation
+except ImportError:
+    noise_cancellation = None
+
+try:
+    from livekit.plugins import silero
+except ImportError:
+    silero = None
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vani")
@@ -237,7 +328,10 @@ def _ws_send_all(msg_dict):
 
 
 def _ws_client_thread(sock, client_id: int = 0):
-    sock.settimeout(60.0)
+    try:
+        sock.settimeout(60.0)
+    except Exception:
+        pass
     try:
         with _ws_clients_lock:
             _ws_clients.add(sock)
@@ -1214,12 +1308,6 @@ async def entrypoint(ctx):
         RoomInputOptions = None
         RoomOutputOptions = None
 
-    from livekit.plugins import google
-    try:
-        from livekit.plugins import noise_cancellation
-    except ImportError:
-        noise_cancellation = None
-
     from vani.prompts import get_realtime_prompt
     from vani.reasoning import get_thinking_capability_tool
 
@@ -1382,9 +1470,8 @@ async def entrypoint(ctx):
         asyncio.create_task(_prewarm_ollama())
 
     vad = None
-    if os.getenv("VANI_USE_SILERO", "0") == "1":
+    if os.getenv("VANI_USE_SILERO", "0") == "1" and silero is not None:
         try:
-            from livekit.plugins import silero
             vad = silero.VAD.load(
                 min_speech_duration=float(os.getenv("VANI_VAD_MIN_SPEECH", "0.04")),
                 min_silence_duration=float(os.getenv("VANI_VAD_MIN_SILENCE", "0.08")),
@@ -1445,6 +1532,11 @@ async def entrypoint(ctx):
         @sess.on("user_stopped_speaking")
         def _on_stop2(*_):
             _patched_state_update(dict(speaking=False, listening=False, processing=True, status="Thinking...", transcript=""))
+            try:
+                from vani.audio.indic_tts_adapter import play_filler
+                asyncio.create_task(play_filler(filler_type="hmm"))
+            except Exception:
+                pass
 
         @sess.on("conversation_item_added")
         def _on_item(event, *_):
@@ -1638,10 +1730,10 @@ async def entrypoint(ctx):
 
     _patched_state_update(dict(connected=True, status="Ready - say something!"))
     _patched_state_update(dict(speaking=False, listening=True, processing=False))
-    _notify_mac("Vani ready", "Voice conversation is ready.")
+    _notify_mac("Siya ready", "Voice conversation is ready.")
     try:
         from vani.reasoning import say_to_user
-        asyncio.create_task(say_to_user("Vani is ready. You can speak now.", limit=None))
+        asyncio.create_task(say_to_user("Siya is ready. You can speak now.", limit=None))
         if os.getenv("VANI_STARTUP_MEMORY_BRIEF", "1") == "1":
             from vani.memory.working_memory import get_startup_memory_brief
             brief = get_startup_memory_brief()
