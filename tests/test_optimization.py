@@ -22,10 +22,10 @@ try:
     print(f"Prompt length: {len(prompt)} characters.")
     
     # Check if a critical keyword exists
-    if "Tu Vani hai" in prompt:
-        print("✅ Success! Vani core Hinglish instructions loaded correctly from core_mode.txt.")
+    if "Tu Siya hai" in prompt:
+        print("✅ Success! Siya core Hinglish instructions loaded correctly from core_mode.txt.")
     else:
-        print("❌ Error: 'Tu Vani hai' persona string not found in the compiled prompt!")
+        print("❌ Error: 'Tu Siya hai' persona string not found in the compiled prompt!")
         sys.exit(1)
         
     if "CALL GO-TO RULES" in prompt:

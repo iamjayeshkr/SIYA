@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 IS_MAC     = sys.platform == "darwin"
 IS_WINDOWS = sys.platform == "win32"
 
+class ResultContainer:
+    def __init__(self):
+        self.result = None
+        self.done = False
+
+_speculative_yt_cache = {}
+_speculative_yt_lock = threading.Lock()
+
 SITE_HOME_URLS = {
     "youtube": "https://www.youtube.com",
     "yt": "https://www.youtube.com",
@@ -671,6 +679,20 @@ def get_youtube_url(
     """
     Resolve a raw voice command to the best matching YouTube watch URL using yt-dlp.
     """
+    search_query = _build_yt_search_query(raw_user_query)
+    normalized = search_query.lower().strip()
+    
+    import time
+    with _speculative_yt_lock:
+        if normalized in _speculative_yt_cache:
+            container = _speculative_yt_cache[normalized]
+            start_time = time.monotonic()
+            while not container.done and (time.monotonic() - start_time < 2.0):
+                time.sleep(0.02)
+            if container.done and container.result:
+                logger.info(f"[youtube] Speculative cache HIT for {search_query!r}: {container.result}")
+                return container.result
+
     ytdlp_bin = shutil.which("yt-dlp")
     if not ytdlp_bin:
         for candidate in (
@@ -690,7 +712,6 @@ def get_youtube_url(
     env_max_results = os.getenv("VANI_YOUTUBE_YTDLP_RESULTS")
     if env_max_results:
         max_results = int(env_max_results)
-    search_query = _build_yt_search_query(raw_user_query)
 
     logger.info("[youtube] raw=%r -> search=%r", raw_user_query, search_query)
 

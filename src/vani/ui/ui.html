@@ -1042,6 +1042,24 @@ function attachRemoteAudioTrack(track, publication) {
   } catch (_) {}
   attachedAgentAudioKey = key;
   attachedAgentAudioTrack = track;
+  if (track && track.receiver) {
+    try {
+      if ('jitterBufferTarget' in track.receiver) {
+        track.receiver.jitterBufferTarget = 0; // Target 0ms jitter buffer in Chrome
+        console.log('[audio] WebRTC jitterBufferTarget set to 0');
+      }
+    } catch (e) {
+      console.warn('[audio] Failed to set jitterBufferTarget:', e);
+    }
+    try {
+      if ('playoutDelayHint' in track.receiver) {
+        track.receiver.playoutDelayHint = 0; // Target 0s playout delay in Chrome
+        console.log('[audio] WebRTC playoutDelayHint set to 0');
+      }
+    } catch (e) {
+      console.warn('[audio] Failed to set playoutDelayHint:', e);
+    }
+  }
   track.attach(agentAudioEl);
   if (agentAudioEl) {
     agentAudioEl.muted = kokoroEnabled;

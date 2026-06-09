@@ -44,24 +44,20 @@ def _open_log(name: str):
     _LOG_HANDLES.append(handle)
     return handle
 
+_single_instance_socket = None
+
 def _acquire_single_instance_lock() -> bool:
     """Prevent multiple launcher instances for this user session."""
-    global _LOCK_FILE_HANDLE
-    if not IS_MAC:
-        return True
+    global _single_instance_socket
+    import socket
     try:
-        import fcntl
-        lock_path = Path("/tmp") / f"{LAUNCH_AGENT_LABEL}.lock"
-        _LOCK_FILE_HANDLE = open(lock_path, "w", encoding="utf-8")
-        fcntl.flock(_LOCK_FILE_HANDLE, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _LOCK_FILE_HANDLE.write(str(os.getpid()))
-        _LOCK_FILE_HANDLE.flush()
+        # Bind to a local port dedicated to the launcher instance
+        _single_instance_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _single_instance_socket.bind(('127.0.0.1', 8768))
+        _single_instance_socket.listen(1)
         return True
-    except BlockingIOError:
+    except socket.error:
         return False
-    except Exception as e:
-        print(f"⚠️  Single-instance lock unavailable: {e}")
-        return True
 
 
 def _existing_vani_pids() -> list[int]:
@@ -157,25 +153,21 @@ def is_vani_running() -> bool:
     if voice_backend != "livekit":
         return ui_ok
 
-    # Check if a worker process is active
+    # Check if a worker process is active using psutil
+    import psutil
     worker_ok = False
-    if IS_WINDOWS:
+    own_pid = os.getpid()
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
-            script = 'Get-CimInstance Win32_Process | Where-Object { ($_.Name -like "*python*") -and ($_.CommandLine -like "*vani.app*--worker*") } | Select-Object -ExpandProperty ProcessId'
-            res = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=3)
-            worker_ok = bool(res.stdout.strip())
-        except Exception:
-            pass
-    else:
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", "vani.app.*--worker"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            worker_ok = bool(result.stdout.strip())
-        except Exception:
+            if proc.info['pid'] == own_pid:
+                continue
+            cmd = proc.info['cmdline']
+            if cmd and any('python' in part.lower() for part in cmd):
+                cmd_str = " ".join(cmd).lower()
+                if "vani.app" in cmd_str and "--worker" in cmd_str:
+                    worker_ok = True
+                    break
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
     return ui_ok and worker_ok
@@ -191,78 +183,53 @@ def start_processes():
 
     # Clean up any leftover stray worker/app processes to prevent conflict
     print("🧹 Cleaning up stray Siya processes...")
-    if IS_WINDOWS:
+    import psutil
+    own_pid = os.getpid()
+    parent_pid = None
+    try:
+        parent_pid = os.getppid()
+    except Exception:
+        pass
+
+    # Clean up python processes
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
-            # Kill processes matching 'vani.app' or 'vani.launcher'
-            exclude_pids = [os.getpid()]
-            try:
-                exclude_pids.append(os.getppid())
-            except Exception:
-                pass
-            exclude_cond = " -and ".join(f"$_.ProcessId -ne {pid}" for pid in exclude_pids)
-            script = (
-                f'Get-CimInstance Win32_Process | Where-Object {{ ($_.Name -like "*python*") -and ($_.CommandLine -like "*vani.app*" -or $_.CommandLine -like "*vani.launcher*") }} | '
-                f'ForEach-Object {{ if ({exclude_cond}) {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }} }}'
-            )
-            subprocess.run(["powershell", "-NoProfile", "-Command", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
-        except Exception:
-            pass
-            
-        # Clean up ports on Windows
-        for port in (5500, 8765, 8081):
-            try:
-                res = subprocess.run(
-                    f'netstat -ano | findstr :{port}',
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                for line in res.stdout.splitlines():
-                    if "LISTENING" in line:
-                        parts = line.strip().split()
-                        if len(parts) >= 5:
-                            pid = int(parts[-1])
-                            if pid != os.getpid():
-                                print(f"  Killing port {port} process {pid} on Windows...")
-                                subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-    else:
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", "vani.app"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            own_pid = os.getpid()
-            for raw in result.stdout.split():
-                try:
-                    pid = int(raw)
-                    if pid != own_pid:
-                        print(f"  Killing stray process {pid}")
-                        os.kill(pid, signal.SIGKILL)
-                except Exception:
-                    pass
-        except Exception:
+            pid = proc.info['pid']
+            if pid in (own_pid, parent_pid):
+                continue
+            cmd = proc.info['cmdline']
+            if cmd and any('python' in part.lower() for part in cmd):
+                cmd_str = " ".join(cmd).lower()
+                if "vani.app" in cmd_str or "vani.launcher" in cmd_str:
+                    print(f"  Killing stray process {pid}: {cmd}")
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1)
+                    except (psutil.TimeoutExpired, psutil.AccessDenied, psutil.NoSuchProcess):
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
-        # Clean up ports
-        for port in (5500, 8765, 8081):
-            try:
-                res = subprocess.run(
-                    ["lsof", f"-ti:{port}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                for raw in res.stdout.split():
-                    pid = int(raw.strip())
-                    if pid != os.getpid():
-                        os.kill(pid, signal.SIGKILL)
-            except Exception:
-                pass
+    # Clean up ports on Windows and Mac using psutil
+    for conn in psutil.net_connections(kind='inet'):
+        try:
+            if conn.laddr.port in (5500, 8765, 8081) and conn.status == 'LISTEN':
+                if conn.pid and conn.pid != own_pid:
+                    proc = psutil.Process(conn.pid)
+                    print(f"  Killing process {conn.pid} listening on port {conn.laddr.port}...")
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1)
+                    except (psutil.TimeoutExpired, psutil.AccessDenied, psutil.NoSuchProcess):
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
     # Step 1: Start agent Worker (non-blocking)
     print("🚀 Starting Siya agent Worker…")

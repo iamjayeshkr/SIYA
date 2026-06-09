@@ -194,19 +194,14 @@ def get_final_prompt(preset="full"):
 # doesn't hit a NameError.
 
 def get_realtime_prompt() -> str:
-    """Realtime prompt: fresh India date/time + working memory + active uploaded document + mentor context."""
-    working    = get_working_memory_block()           if _WORKING_MEMORY_AVAILABLE else ""
-    doc_block  = get_active_document_prompt_block()   if _ACTIVE_DOC_AVAILABLE     else ""
-    # Gemini Files API block — tells Gemini it has native file access
-    file_block = get_gemini_file_prompt_block()       if _GEMINI_FILE_AVAILABLE    else ""
-    mentor_block = get_mentor_prompt_block()
+    # Sirf core + realtime inject karo realtime session ke liye
+    # Working memory, mentor block, file block — optional rakh
+    working = get_working_memory_block() if _WORKING_MEMORY_AVAILABLE else ""
     return (
         manager.get_prompt(preset="realtime")
         + working
-        + get_dynamic_context()
-        + file_block
-        + doc_block
-        + mentor_block
+        # mentor_block, file_block, doc_block REMOVE for lower latency
+        # inject these only when user explicitly asks
     )
 
 

@@ -427,6 +427,10 @@ async def say_to_user(text: str, limit: "int | None" = None):
         logger.warning(f"[MESSAGING] Cannot speak '{text}' - session reference is None.")
         return
     try:
+        try:
+            from vani.app import is_english
+        except Exception:
+            def is_english(t): return False
         speech_text = _speech_safe_text(text, limit=limit)
         
         # Check if TTS is using a Hindi voice to bypass English phonetic normalization
@@ -450,27 +454,19 @@ async def say_to_user(text: str, limit: "int | None" = None):
         except Exception:
             pass
 
-        # ── FILLER — plays instantly before TTS synthesis starts ─────────────
-        try:
-            from vani.audio.indic_tts_adapter import play_filler
-            asyncio.create_task(play_filler(
-                filler_type="auto",
-                response_len=len(speech_text)
-            ))
-            await asyncio.sleep(0.05)   # yield so filler Popen starts before CPU load
-        except Exception:
-            pass   # never block on filler failure
-        # ── END FILLER ───────────────────────────────────────────────────────
 
-        # ── INDIC-TTS — speaks ALL replies in one consistent voice ──────────
+        # ── INDIC-TTS — only for longer Hinglish replies (60+ chars) ────────
+        # Short replies go straight to Gemini Realtime native audio (already
+        # streaming), avoiding synthesis latency on quick responses.
         try:
             from vani.audio import synthesize_and_play, synthesize_and_play_chunked
-            if len(speech_text) > 120:
-                spoke = await synthesize_and_play_chunked(speech_text)
-            else:
-                spoke = await synthesize_and_play(speech_text)
-            if spoke:
-                return   # ✅ TTS spoke it — done
+            if len(speech_text) > 60 and not is_english(speech_text):
+                if len(speech_text) > 120:
+                    spoke = await synthesize_and_play_chunked(speech_text)
+                else:
+                    spoke = await synthesize_and_play(speech_text)
+                if spoke:
+                    return   # ✅ TTS spoke it — done
         except ImportError:
             pass
         except Exception as _ke:
@@ -718,7 +714,7 @@ def register_session(session):
         _session_loop = asyncio.get_running_loop()
     except RuntimeError:
         _session_loop = None
-    logger.info("[MESSAGING] Registered LiveKit session reference ✅")
+    logger.info("[MESSAGING] Registered LiveKit session reference OK")
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -745,7 +741,7 @@ async def thinking_capability(query: str) -> str:
     try:
         result = await asyncio.wait_for(
             asyncio.shield(future),
-            timeout=float(os.getenv("VANI_TOOL_SYNC_TIMEOUT", "2.0"))
+            timeout=float(os.getenv("VANI_TOOL_SYNC_TIMEOUT", "0.5"))
         )
 
         # STALE sentinel — this instruction was superseded by a newer one

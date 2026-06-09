@@ -136,7 +136,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vani")
 
 # ── Model routing ─────────────────────────────────────────────────────────────
-PREFERRED_MODEL = "gemini-3.1-flash"
+PREFERRED_MODEL = "gemini-2.5-flash"
 REALTIME_MODEL  = os.getenv("VANI_REALTIME_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 log.info(f"[MODEL] Preferred: {PREFERRED_MODEL}  Runtime (realtime): {REALTIME_MODEL}")
 
@@ -385,29 +385,48 @@ def mark_fallback_speech(text: str):
     _recently_spoken_fallback_texts.add(text.strip())
 
 
+_state_update_thread = None
+_state_update_queue = None
+
 def _patched_state_update(new_values: dict):
     state.update(new_values)
     _ws_push_state()
     # Sync state across processes if in worker mode
     import sys
     if "--worker" in sys.argv:
-        def _send_sync():
-            try:
+        global _state_update_thread, _state_update_queue
+        if _state_update_thread is None:
+            import queue
+            import threading
+            _state_update_queue = queue.Queue()
+            def _state_update_worker():
                 import urllib.request
                 import json
-                data = json.dumps(new_values).encode("utf-8")
-                req = urllib.request.Request(
-                    "http://127.0.0.1:5500/update_state",
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST"
-                )
-                with urllib.request.urlopen(req, timeout=1.0) as f:
-                    f.read()
-            except Exception:
-                pass
-        import threading
-        threading.Thread(target=_send_sync, daemon=True).start()
+                opener = urllib.request.build_opener()
+                while True:
+                    try:
+                        vals = _state_update_queue.get()
+                        if vals is None:
+                            break
+                        data = json.dumps(vals).encode("utf-8")
+                        req = urllib.request.Request(
+                            "http://127.0.0.1:5500/update_state",
+                            data=data,
+                            headers={"Content-Type": "application/json"},
+                            method="POST"
+                        )
+                        try:
+                            with opener.open(req, timeout=1.0) as f:
+                                f.read()
+                        except Exception:
+                            pass
+                        finally:
+                            _state_update_queue.task_done()
+                    except Exception:
+                        pass
+            _state_update_thread = threading.Thread(target=_state_update_worker, daemon=True, name="StateUpdateWorker")
+            _state_update_thread.start()
+        _state_update_queue.put(new_values)
 
 
 def _notify_mac(title: str, message: str):
@@ -448,6 +467,14 @@ async def _prewarm_ollama():
         log.info("[ollama] Model warmed up successfully.")
     except Exception as e:
         log.warning(f"[ollama] Warmup failed: {e}")
+
+
+async def _prewarm_gemini():
+    try:
+        from vani.reasoning.ollama import prewarm_gemini_client
+        await prewarm_gemini_client()
+    except Exception as e:
+        log.warning(f"[gemini-prewarm] Failed: {e}")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -1391,20 +1418,13 @@ async def entrypoint(ctx):
 
     class Assistant(Agent):
         def __init__(self):
-            realtime_prompt = (
-                get_realtime_prompt()
-                + "\n\nVOICE DELIVERY:\n"
-                + "- Keep normal replies short and natural in Hinglish.\n"
-                + "- If Rudra explicitly asks for detail, explanation, teaching, story, or step-by-step guidance, speak longer.\n"
-                + "- Complete answers do — beech mein mat ruko. Agar lamba hai toh pehle summary bol phir details.\n"
-                + "- Keep speech smooth: avoid markdown, code blocks, and repeated filler while speaking.\n"
-            )
+            realtime_prompt = get_realtime_prompt()
             super().__init__(
                 instructions=realtime_prompt,
                 llm=google.beta.realtime.RealtimeModel(
                     model=REALTIME_MODEL,
                     voice="Aoede",
-                    temperature=float(os.getenv("VANI_REALTIME_TEMPERATURE", "0.65")),
+                    temperature=float(os.getenv("VANI_REALTIME_TEMPERATURE", "0.30")),
                     instructions=realtime_prompt,
                     modalities=["AUDIO"],
                 ),
@@ -1469,6 +1489,9 @@ async def entrypoint(ctx):
     if os.getenv("VANI_PREWARM_OLLAMA", "0") == "1":
         asyncio.create_task(_prewarm_ollama())
 
+    # Pre-warm the Gemini client connection pool to avoid first-call delay
+    asyncio.create_task(_prewarm_gemini())
+
     vad = None
     if os.getenv("VANI_USE_SILERO", "0") == "1" and silero is not None:
         try:
@@ -1510,15 +1533,41 @@ async def entrypoint(ctx):
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             _run_audio(vani_activated)
 
+        # ── Speaker verification: pre-compute embedding while user is still speaking ──
+        _pending_speaker_future = None
+
+        async def _precompute_speaker_embedding_async():
+            """Build the speaker embedding in the background during the utterance."""
+            try:
+                await asyncio.sleep(0.6)  # Let at least 600ms of audio accumulate first
+                if not session_audio_buffer:
+                    return
+                import numpy as np
+                from vani.audio.wake_verifier import is_verify_enabled, verify_wake_audio_sync
+                if not is_verify_enabled():
+                    return
+                wav = np.concatenate(list(session_audio_buffer))
+                loop = asyncio.get_running_loop()
+                # Run in executor so it doesn't block the event loop
+                result = await loop.run_in_executor(None, verify_wake_audio_sync, wav, session_audio_sr)
+                return result
+            except Exception as e:
+                log.debug(f"[speaker-precompute] skipped: {e}")
+                return None
+
         @sess.on("user_started_speaking")
         def _on_user(*_):
+            nonlocal _pending_speaker_future
             try:
                 from vani.audio import stop_playback
-                stop_playback()              # ADD THIS — stops Indic-TTS mid-sentence
+                stop_playback()              # stops Indic-TTS mid-sentence
             except Exception:
                 pass
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             session_audio_buffer.clear()
+            # Kick off speaker embedding computation NOW, in parallel with the user speaking
+            if SECURITY_ENABLED:
+                _pending_speaker_future = asyncio.ensure_future(_precompute_speaker_embedding_async())
             try:
                 from vani.reasoning.worker import _get_task_queue
                 q = _get_task_queue()
@@ -1532,11 +1581,6 @@ async def entrypoint(ctx):
         @sess.on("user_stopped_speaking")
         def _on_stop2(*_):
             _patched_state_update(dict(speaking=False, listening=False, processing=True, status="Thinking...", transcript=""))
-            try:
-                from vani.audio.indic_tts_adapter import play_filler
-                asyncio.create_task(play_filler(filler_type="hmm"))
-            except Exception:
-                pass
 
         @sess.on("conversation_item_added")
         def _on_item(event, *_):
@@ -1554,15 +1598,18 @@ async def entrypoint(ctx):
                         _recently_spoken_fallback_texts.discard(text_strip)
                         return
                     _patched_state_update(dict(transcript=text))
-                    if INDIC_TTS_ENABLED:
-                        if not is_english(text):
-                            # Hinglish/Hindi response -> Speak using local Indic-TTS + RVC and mute WebRTC audio track
-                            _patched_state_update(dict(kokoro_enabled=True))
-                            asyncio.create_task(say_to_user(text))
-                        else:
-                            # English response -> Skip local TTS, unmute WebRTC audio track so Gemini Realtime speaks
-                            _patched_state_update(dict(kokoro_enabled=False))
-                            log.info("[Indic-TTS] Skipped speaking because response is English: %r", text)
+                    if INDIC_TTS_ENABLED and not is_english(text):
+                        _patched_state_update(dict(kokoro_enabled=True))
+                        asyncio.create_task(say_to_user(text))
+                    else:
+                        _patched_state_update(dict(kokoro_enabled=False))
+            except Exception:
+                pass
+
+        async def _speculative_warm(partial_text: str):
+            try:
+                from vani.planner.brain import PlannerBrain
+                await PlannerBrain.classify_only(partial_text)
             except Exception:
                 pass
 
@@ -1578,41 +1625,53 @@ async def entrypoint(ctx):
 
                     is_final = getattr(event, "is_final", None)
                     if is_final is False:
-                        # Strictly interim — skip processing entirely
+                        if len(text) > 15:
+                            asyncio.create_task(_speculative_warm(text))
                         return
                     # is_final is True or None (attribute absent = treat as final)
                     _session_vars["last_user_transcript"] = text
 
-                    # ── Speaker Verification Gate ─────────────────────────────────
+                    # ── Speaker Verification Gate (asynchronous/non-blocking) ───────
                     if SECURITY_ENABLED:
                         from vani.audio.wake_verifier import is_verify_enabled
                         if is_verify_enabled():
-                            import numpy as np
-                            wav = None
-                            if session_audio_buffer:
-                                wav = np.concatenate(list(session_audio_buffer))
-                            
-                            if wav is not None:
-                                from vani.audio.wake_verifier import verify_wake_audio_sync
-                                loop = asyncio.get_running_loop()
-                                accepted = await loop.run_in_executor(
-                                    None, verify_wake_audio_sync, wav, session_audio_sr
-                                )
-                                if not accepted:
+                            async def _verify_speaker_async():
+                                accepted = None
+                                # Use the pre-computed future from user_started_speaking if ready
+                                if _pending_speaker_future is not None:
+                                    try:
+                                        if _pending_speaker_future.done():
+                                            accepted = _pending_speaker_future.result()
+                                        else:
+                                            # Not done yet — wait briefly (should be near-instant)
+                                            accepted = await asyncio.wait_for(_pending_speaker_future, timeout=0.5)
+                                    except Exception as e:
+                                        log.debug(f"[speaker-verify] pre-computed future failed: {e}")
+                                        accepted = None
+                                # Fallback: compute fresh if pre-computation failed or wasn't started
+                                if accepted is None and session_audio_buffer:
+                                    import numpy as np
+                                    from vani.audio.wake_verifier import verify_wake_audio_sync
+                                    wav = np.concatenate(list(session_audio_buffer))
+                                    loop = asyncio.get_running_loop()
+                                    accepted = await loop.run_in_executor(
+                                        None, verify_wake_audio_sync, wav, session_audio_sr
+                                    )
+                                if accepted is False:
                                     log.warning("[SECURITY] Speaker verification failed during session turn!")
                                     try:
                                         await sess.interrupt()
                                     except Exception:
                                         pass
-                                    
                                     activate_lockdown()
                                     response = get_lockdown_response(text)
                                     if response:
                                         await _say_lockdown(sess, response)
-                                    return
-                                else:
+                                elif accepted is True:
                                     if is_locked_down():
                                         deactivate_lockdown()
+
+                            asyncio.create_task(_verify_speaker_async())
 
                     # ── Security lockdown intercept ───────────────────────────────
                     if SECURITY_ENABLED and is_locked_down():
@@ -1647,9 +1706,9 @@ async def entrypoint(ctx):
     def _new_agent_session():
         session_kwargs = {
             "allow_interruptions": True,
-            "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.08")),
-            "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "0.25")),
-            "min_interruption_duration": float(os.getenv("VANI_INTERRUPT_MIN_DURATION", "0.12")),
+            "min_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MIN_DELAY", "0.05")),
+            "max_endpointing_delay": float(os.getenv("VANI_ENDPOINT_MAX_DELAY", "0.15")),
+            "min_interruption_duration": float(os.getenv("VANI_INTERRUPT_MIN_DURATION", "0.08")),
         }
         if vad:
             session_kwargs["vad"] = vad
@@ -1844,6 +1903,18 @@ def main():
         log.info("[workers] Background workers started")
     except Exception as _worker_err:
         log.warning(f"[workers] Worker startup failed (non-fatal): {_worker_err}")
+    # Pre-warm Indic-TTS so first voice reply has no model-load delay
+    def _prewarm_tts():
+        try:
+            import asyncio as _asyncio
+            from vani.audio import synthesize_and_play as _synth
+            _loop = _asyncio.new_event_loop()
+            _loop.run_until_complete(_synth(" "))
+            _loop.close()
+            log.info("[tts] Indic-TTS pre-warmed successfully")
+        except Exception as _e:
+            log.warning(f"[tts] Pre-warm failed (non-fatal): {_e}")
+    threading.Thread(target=_prewarm_tts, daemon=True, name="tts-prewarm").start()
     # ──────────────────────────────────────────────────────────────────────────
     if voice_backend == "livekit":
         _patched_state_update(dict(text_ready=True, status="Text/image ready - voice connecting..."))

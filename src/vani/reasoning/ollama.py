@@ -36,20 +36,56 @@ def _dispatch_intent_in_thread(intent: str, data, query: str) -> None:
     ).start()
 
 
-def _call_gemini_fallback(prompt: str) -> str:
-    """Direct call to Gemini Flash API — extremely fast (milliseconds)."""
+_gemini_client = None
+
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        import os
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+        if not api_key:
+            logger.warning("[Gemini Fallback] No API key found in GEMINI_API_KEY or GOOGLE_API_KEY. Cannot run API fallback.")
+            return None
+        try:
+            from google import genai
+            _gemini_client = genai.Client(api_key=api_key)
+        except Exception as e:
+            logger.warning(f"[Gemini Fallback] Failed to initialize genai client: {e}")
+            return None
+    return _gemini_client
+
+
+async def prewarm_gemini_client():
+    """Warm up the Gemini Client and establish network connection to reduce first call delay."""
+    client = _get_gemini_client()
+    if not client:
+        return
     import os
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
-    if not api_key:
-        logger.warning("[Gemini Fallback] No API key found in GEMINI_API_KEY or GOOGLE_API_KEY. Cannot run API fallback.")
+    try:
+        model_name = os.getenv("VANI_TEXT_MODEL", "gemini-flash-lite-latest")
+        logger.info("[Gemini Fallback] Pre-warming async client connection pool...")
+        # A tiny fast call to pre-warm
+        await client.aio.models.generate_content(
+            model=model_name,
+            contents="ping",
+            config={"max_output_tokens": 1}
+        )
+        logger.info("[Gemini Fallback] Async client connection pool pre-warmed OK")
+    except Exception as e:
+        logger.warning(f"[Gemini Fallback] Pre-warming failed (non-fatal): {e}")
+
+
+async def _call_gemini_fallback(prompt: str) -> str:
+    """Direct async call to Gemini Flash API — extremely fast (reused client)."""
+    client = _get_gemini_client()
+    if not client:
         return ""
 
+    import os
     try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
         model_name = os.getenv("VANI_TEXT_MODEL", "gemini-flash-lite-latest")
         logger.info(f"[Gemini Fallback] Attempting tool routing using {model_name}...")
-        response = client.models.generate_content(
+        response = await client.aio.models.generate_content(
             model=model_name,
             contents=prompt,
             config={
@@ -202,16 +238,20 @@ async def _qwen_decide_and_run(query: str) -> str:
         loop = asyncio.get_running_loop()
         
         # 1. Try hyper-fast Gemini REST API fallback first
-        raw = await loop.run_in_executor(None, _call_gemini_fallback, prompt)
+        raw = await _call_gemini_fallback(prompt)
         
         # 2. Fall back to local Ollama if Gemini was offline, rate-limited, or failed
         if not raw:
-            if _ollama_semaphore is None or _ollama_semaphore_loop is not loop:
-                _ollama_semaphore = asyncio.Semaphore(1)
-                _ollama_semaphore_loop = loop
-            async with _ollama_semaphore:
-                raw = await loop.run_in_executor(None, _call_ollama_sync, prompt)
-                await asyncio.sleep(0.1)
+            if os.getenv("VANI_OLLAMA_ENABLED", "1") == "0":
+                logger.info("[LLM Router] Ollama fallback is disabled by configuration (VANI_OLLAMA_ENABLED=0). Returning empty decision.")
+                raw = '{"tool": null, "args": {}}'
+            else:
+                if _ollama_semaphore is None or _ollama_semaphore_loop is not loop:
+                    _ollama_semaphore = asyncio.Semaphore(1)
+                    _ollama_semaphore_loop = loop
+                async with _ollama_semaphore:
+                    raw = await loop.run_in_executor(None, _call_ollama_sync, prompt)
+                    await asyncio.sleep(0.1)
                 
         if len(_OLLAMA_RESPONSE_CACHE) >= _OLLAMA_CACHE_MAX:
             _OLLAMA_RESPONSE_CACHE.popitem(last=False)

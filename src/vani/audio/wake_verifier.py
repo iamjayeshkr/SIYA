@@ -46,15 +46,25 @@ GATE_ENABLED: bool = _gate_raw not in ("false", "0", "no", "off")
 THRESHOLD: float = float(_os.getenv("VANI_SPEAKER_THRESHOLD", "0.82"))
 
 
+_last_env_mtime = 0.0
+_last_verify_enabled = _os.getenv("VANI_SPEAKER_VERIFY", "0") == "1"
+
 def is_verify_enabled() -> bool:
-    """Check if speaker verification is active, reloading .env to pick up live updates."""
+    """Check if speaker verification is active, reloading .env to pick up live updates if it changed."""
+    global _last_env_mtime, _last_verify_enabled
     try:
-        import dotenv
         from vani.config import PROJECT_ROOT
-        dotenv.load_dotenv(str(PROJECT_ROOT / ".env"), override=True)
+        env_path = PROJECT_ROOT / ".env"
+        if env_path.exists():
+            mtime = env_path.stat().st_mtime
+            if mtime != _last_env_mtime:
+                import dotenv
+                dotenv.load_dotenv(str(env_path), override=True)
+                _last_env_mtime = mtime
+                _last_verify_enabled = _os.getenv("VANI_SPEAKER_VERIFY", "0") == "1"
     except Exception:
         pass
-    return _os.getenv("VANI_SPEAKER_VERIFY", "0") == "1"
+    return _last_verify_enabled
 
 
 def is_gate_enabled() -> bool:

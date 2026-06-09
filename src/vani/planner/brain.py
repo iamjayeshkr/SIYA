@@ -148,6 +148,63 @@ class PlannerBrain:
         return result
 
     @staticmethod
+    async def classify_only(query: str) -> dict | None:
+        """
+        Classifies the query intent without executing it, and triggers pre-warming if applicable.
+        """
+        try:
+            planner = _get_planner()
+            plan = planner.plan(query)
+            if not plan or plan.requires_llm:
+                return None
+            
+            intent = plan.intent
+            if intent == "YOUTUBE_PLAY":
+                subtask = plan.subtasks[0] if plan.subtasks else None
+                song_query = subtask.data if (subtask and subtask.data) else ""
+                if song_query:
+                    import threading
+                    from vani.browser.control import (
+                        get_youtube_url,
+                        _build_yt_search_query,
+                        _speculative_yt_cache,
+                        _speculative_yt_lock,
+                        ResultContainer
+                    )
+                    search_query = _build_yt_search_query(song_query)
+                    normalized = search_query.lower().strip()
+                    
+                    with _speculative_yt_lock:
+                        if normalized not in _speculative_yt_cache:
+                            container = ResultContainer()
+                            _speculative_yt_cache[normalized] = container
+                            
+                            def _run_lookup():
+                                try:
+                                    res = get_youtube_url(song_query)
+                                    container.result = res
+                                except Exception:
+                                    pass
+                                finally:
+                                    container.done = True
+                            
+                            threading.Thread(target=_run_lookup, daemon=True, name="speculative-yt").start()
+                            logger.info(f"[SPECULATIVE] Kicked off speculative YT lookup for: {song_query!r}")
+            elif intent in ("GOOGLE_SEARCH", "OPEN_URL"):
+                import sys
+                import asyncio
+                if sys.platform == "win32":
+                    from vani.browser.control import _find_browser_win
+                    asyncio.create_task(asyncio.to_thread(_find_browser_win, "chrome"))
+                elif sys.platform == "darwin":
+                    from vani.browser.control import _find_browser_mac
+                    asyncio.create_task(asyncio.to_thread(_find_browser_mac, "chrome"))
+            return {"intent": intent, "subtasks": len(plan.subtasks)}
+        except Exception as e:
+            logger.warning(f"[SPECULATIVE] Classification/warmup failed: {e}")
+            return None
+
+    @staticmethod
     def get_status() -> dict:
         """Returns current brain status for diagnostics."""
         global _planner_instance
