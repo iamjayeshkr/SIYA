@@ -113,7 +113,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-from vani.config import ASSETS_ROOT, PACKAGE_ROOT, PROJECT_ROOT, INDIC_TTS_ENABLED
+from vani.config import ASSETS_ROOT, PACKAGE_ROOT, PROJECT_ROOT
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -227,7 +227,7 @@ state = {
     "text_ready": False,
     "status":     "Starting up...",
     "transcript": "",
-    "kokoro_enabled": INDIC_TTS_ENABLED,
+    "kokoro_enabled": os.getenv("VANI_LOCAL_TTS", "0") == "1",
 }
 
 # ── WebSocket push manager ─────────────────────────────────────────────────────
@@ -1310,6 +1310,9 @@ def _patch_html(lk_url: str = "", token: str = "", voice_backend: str = "none") 
 
 
 def _open_ui(html_path: Path):
+    if os.getenv("VANI_DESKTOP") == "1" or os.getenv("VANI_NO_BROWSER") == "1":
+        log.info("[UI] Running in desktop mode. Skipping default browser launch.")
+        return
     import webbrowser
     webbrowser.open(f"http://127.0.0.1:5500/")
     log.info("[UI] Opened browser at http://127.0.0.1:5500/")
@@ -1318,11 +1321,6 @@ def _open_ui(html_path: Path):
 # ── Module-level entrypoint ───────────────────────────────────────────────────
 
 async def entrypoint(ctx):
-    # Pre-warm Indic-TTS so first reply has no model-load delay
-    try:
-        from vani.audio import synthesize_and_play
-    except Exception:
-        pass
 
     from livekit.agents import AgentSession, Agent
     # ── FIX 6: RoomInputOptions import guarded — set to None if unavailable ───
@@ -1419,6 +1417,7 @@ async def entrypoint(ctx):
     class Assistant(Agent):
         def __init__(self):
             realtime_prompt = get_realtime_prompt()
+            modalities = ["AUDIO"]
             super().__init__(
                 instructions=realtime_prompt,
                 llm=google.beta.realtime.RealtimeModel(
@@ -1426,7 +1425,7 @@ async def entrypoint(ctx):
                     voice="Aoede",
                     temperature=float(os.getenv("VANI_REALTIME_TEMPERATURE", "0.30")),
                     instructions=realtime_prompt,
-                    modalities=["AUDIO"],
+                    modalities=modalities,
                 ),
                 tools=[get_thinking_capability_tool()],
             )
@@ -1532,6 +1531,20 @@ async def entrypoint(ctx):
         def _on_stop(*_):
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             _run_audio(vani_activated)
+            
+            # Local TTS intercept
+            if os.getenv("VANI_LOCAL_TTS", "0") == "1":
+                try:
+                    msgs = [m for m in sess.history.items if m.role in ("assistant", "agent")]
+                    if msgs:
+                        last_msg = msgs[-1]
+                        text = last_msg.text or last_msg.text_content or ""
+                        if text:
+                            log.info(f"[LOCAL_TTS] Speaking direct turn: {text}")
+                            from vani.audio.local_tts import speak_local
+                            speak_local(text)
+                except Exception as ex:
+                    log.warning(f"[LOCAL_TTS] Failed to speak last message: {ex}")
 
         # ── Speaker verification: pre-compute embedding while user is still speaking ──
         _pending_speaker_future = None
@@ -1585,8 +1598,6 @@ async def entrypoint(ctx):
         @sess.on("conversation_item_added")
         def _on_item(event, *_):
             try:
-                from vani.reasoning.worker import say_to_user
-                from vani.audio import INDIC_TTS_ENABLED
                 chat_msg = getattr(event, "item", None)
                 if chat_msg is None:
                     chat_msg = event
@@ -1598,11 +1609,6 @@ async def entrypoint(ctx):
                         _recently_spoken_fallback_texts.discard(text_strip)
                         return
                     _patched_state_update(dict(transcript=text))
-                    if INDIC_TTS_ENABLED and not is_english(text):
-                        _patched_state_update(dict(kokoro_enabled=True))
-                        asyncio.create_task(say_to_user(text))
-                    else:
-                        _patched_state_update(dict(kokoro_enabled=False))
             except Exception:
                 pass
 
@@ -1903,18 +1909,6 @@ def main():
         log.info("[workers] Background workers started")
     except Exception as _worker_err:
         log.warning(f"[workers] Worker startup failed (non-fatal): {_worker_err}")
-    # Pre-warm Indic-TTS so first voice reply has no model-load delay
-    def _prewarm_tts():
-        try:
-            import asyncio as _asyncio
-            from vani.audio import synthesize_and_play as _synth
-            _loop = _asyncio.new_event_loop()
-            _loop.run_until_complete(_synth(" "))
-            _loop.close()
-            log.info("[tts] Indic-TTS pre-warmed successfully")
-        except Exception as _e:
-            log.warning(f"[tts] Pre-warm failed (non-fatal): {_e}")
-    threading.Thread(target=_prewarm_tts, daemon=True, name="tts-prewarm").start()
     # ──────────────────────────────────────────────────────────────────────────
     if voice_backend == "livekit":
         _patched_state_update(dict(text_ready=True, status="Text/image ready - voice connecting..."))

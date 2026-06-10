@@ -1,9 +1,11 @@
 """Audio and avatar helpers."""
 
-from .indic_tts_adapter import (
-    synthesize_and_play,
-    synthesize_and_play_chunked,
-    stop_playback,
-    is_short_reply,
-    INDIC_TTS_ENABLED,
-)
+def stop_playback():
+    """No-op placeholder for Indic-TTS playback stopper."""
+    pass
+
+def is_short_reply(text: str) -> bool:
+    """Compatibility mock for reply length checks."""
+    return False
+
+INDIC_TTS_ENABLED = False

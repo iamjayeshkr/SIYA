@@ -1,0 +1,12 @@
+{
+  "name": "vani-desktop",
+  "version": "1.0.0",
+  "description": "Desktop wrapper for Vani AI Assistant",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^31.0.0"
+  }
+}

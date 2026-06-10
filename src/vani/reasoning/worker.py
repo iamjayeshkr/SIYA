@@ -427,15 +427,10 @@ async def say_to_user(text: str, limit: "int | None" = None):
         logger.warning(f"[MESSAGING] Cannot speak '{text}' - session reference is None.")
         return
     try:
-        try:
-            from vani.app import is_english
-        except Exception:
-            def is_english(t): return False
         speech_text = _speech_safe_text(text, limit=limit)
         
         # Check if TTS is using a Hindi voice to bypass English phonetic normalization
         is_hindi = True
-        
         if is_hindi:
             speech_text = _normalize_for_tts(
                 speech_text,
@@ -447,54 +442,23 @@ async def say_to_user(text: str, limit: "int | None" = None):
         else:
             speech_text = _normalize_for_tts(speech_text)
             
-        logger.info(f"[MESSAGING] Speaking to user: {speech_text}")
+        logger.info(f"[MESSAGING] Speaking natively to user: {speech_text}")
         try:
             from vani.app import _patched_state_update
             _patched_state_update(dict(transcript=speech_text))
         except Exception:
             pass
 
+        # If local TTS is enabled, bypass LiveKit/Gemini cloud audio playback
+        if os.getenv("VANI_LOCAL_TTS", "0") == "1":
+            try:
+                from vani.audio.local_tts import speak_local
+                speak_local(speech_text)
+                return
+            except Exception as e:
+                logger.error(f"[LOCAL_TTS] Error in say_to_user: {e}")
 
-        # ── INDIC-TTS — only for longer Hinglish replies (60+ chars) ────────
-        # Short replies go straight to Gemini Realtime native audio (already
-        # streaming), avoiding synthesis latency on quick responses.
-        try:
-            from vani.audio import synthesize_and_play, synthesize_and_play_chunked
-            if len(speech_text) > 60 and not is_english(speech_text):
-                if len(speech_text) > 120:
-                    spoke = await synthesize_and_play_chunked(speech_text)
-                else:
-                    spoke = await synthesize_and_play(speech_text)
-                if spoke:
-                    return   # ✅ TTS spoke it — done
-        except ImportError:
-            pass
-        except Exception as _ke:
-            logger.warning(f"[MESSAGING] TTS error: {_ke}")
-
-        # ── OFFLINE OS NATIVE TTS — speaks announcements without polluting Gemini history ──
-        try:
-            import sys
-            import subprocess
-            if sys.platform == "win32":
-                clean_text = speech_text.replace('"', '`"')
-                script = (
-                    f"Add-Type -AssemblyName System.Speech; "
-                    f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                    f'$s.Speak("{clean_text}")'
-                )
-                subprocess.Popen(
-                    ["powershell", "-NoProfile", "-Command", script],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                return  # ✅ Spoke via Windows TTS
-            elif sys.platform == "darwin":
-                subprocess.Popen(["say", speech_text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return  # ✅ Spoke via macOS TTS
-        except Exception as _oe:
-            logger.warning(f"[MESSAGING] OS native TTS failed: {_oe}")
-
-        # ── GEMINI FALLBACK — fallback if both Indic-TTS and OS native TTS fail ──
+        # Use Gemini Realtime native speech directly
         try:
             allow_interruptions = True
             if len(speech_text) > 120 or any(kw in speech_text.lower() for kw in [
@@ -514,36 +478,26 @@ async def say_to_user(text: str, limit: "int | None" = None):
             except Exception:
                 pass
 
-            # Safe generate_reply call without the instructions keyword to avoid compatibility issues
-            handle = _session_ref.generate_reply(
-                user_input=speech_text,
-                allow_interruptions=allow_interruptions,
-            )
-            if not allow_interruptions:
-                try:
-                    await handle.wait_for_playout()
-                finally:
-                    queue.set_interruptible(True)
-            elif os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
-                await handle.wait_for_playout()
-        except (AttributeError, TypeError):
-            # Fallback for non-realtime sessions
+            # Safe generate_reply call or fallback to say()
             try:
-                from vani.app import mark_fallback_speech
-                mark_fallback_speech(speech_text)
-            except Exception:
-                pass
-            try:
-                handle = _session_ref.say(speech_text)
+                if hasattr(_session_ref, "say"):
+                    handle = _session_ref.say(speech_text)
+                else:
+                    handle = _session_ref.generate_reply(
+                        user_input=speech_text,
+                        allow_interruptions=allow_interruptions,
+                    )
                 if not allow_interruptions:
                     try:
                         await handle.wait_for_playout()
                     finally:
-                        _get_task_queue().set_interruptible(True)
+                        queue.set_interruptible(True)
                 elif os.getenv("VANI_WAIT_FOR_SPEECH_PLAYOUT", "0") == "1":
                     await handle.wait_for_playout()
             except Exception as se:
-                logger.warning(f"[MESSAGING] Fallback say failed (likely no TTS model): {se}")
+                logger.warning(f"[MESSAGING] Native Gemini speech failed: {se}")
+        except Exception as e:
+            logger.error(f"[MESSAGING] Failed to speak: {e}")
     except Exception as e:
         logger.error(f"[MESSAGING] Error in say_to_user: {e}")
 

@@ -184,7 +184,19 @@ def get_final_prompt(preset="full"):
 
     static_prompt = manager.get_prompt(preset=preset)
     mentor_block = get_mentor_prompt_block()
-    return static_prompt + get_dynamic_context() + mentor_block
+    prompt = static_prompt + get_dynamic_context() + mentor_block
+    
+    if os.getenv("VANI_ENGLISH_ONLY", "0") == "1":
+        prompt += (
+            "\n\n==================================================\n"
+            "CRITICAL: STRICT ENGLISH ONLY RULE\n"
+            "- You must speak, reply, and interact EXCLUSIVELY in English.\n"
+            "- Do NOT use any Hindi, Hinglish, or mixed Urdu/Hindi words (e.g., do NOT say 'Haan', 'Achaa', 'Yaar', 'Bol', 'Samjha', 'Kaise').\n"
+            "- Use standard, clear, natural English equivalent words (e.g., say 'Yes', 'Okay', 'Listen'). You should still address Rudra as 'Ji' for names/addressing, but the rest of your sentence must be in English.\n"
+            "- Translate all Hinglish/Hindi rules, example responses, and prompts into natural, friendly English.\n"
+            "==================================================\n"
+        )
+    return prompt
 
 
 # ── FIX 1 & 2: get_realtime_prompt() defined BEFORE get_security_prompt() ─────
@@ -197,12 +209,23 @@ def get_realtime_prompt() -> str:
     # Sirf core + realtime inject karo realtime session ke liye
     # Working memory, mentor block, file block — optional rakh
     working = get_working_memory_block() if _WORKING_MEMORY_AVAILABLE else ""
-    return (
+    prompt = (
         manager.get_prompt(preset="realtime")
         + working
         # mentor_block, file_block, doc_block REMOVE for lower latency
         # inject these only when user explicitly asks
     )
+    if os.getenv("VANI_ENGLISH_ONLY", "0") == "1":
+        prompt += (
+            "\n\n==================================================\n"
+            "CRITICAL: STRICT ENGLISH ONLY RULE\n"
+            "- You must speak, reply, and interact EXCLUSIVELY in English.\n"
+            "- Do NOT use any Hindi, Hinglish, or mixed Urdu/Hindi words (e.g., do NOT say 'Haan', 'Achaa', 'Yaar', 'Bol', 'Samjha', 'Kaise').\n"
+            "- Use standard, clear, natural English equivalent words (e.g., say 'Yes', 'Okay', 'Listen'). You should still address Rudra as 'Ji' for names/addressing, but the rest of your sentence must be in English.\n"
+            "- Translate all Hinglish/Hindi rules, example responses, and prompts into natural, friendly English.\n"
+            "==================================================\n"
+        )
+    return prompt
 
 
 def get_security_prompt() -> str:

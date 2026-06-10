@@ -98,6 +98,12 @@ html, body {
   align-items: flex-start;
   justify-content: space-between;
 }
+.shell {
+  -webkit-app-region: drag;
+}
+.quit-btn, .minimize-btn, #panel-toggle, #plugin-fab, #msg-input, #send-btn, #doc-btn, #photo-btn, #text-panel, #chat-history, #conn-overlay button, #start-btn {
+  -webkit-app-region: no-drag;
+}
 
 .logo {
   font-family: 'Rajdhani', sans-serif;
@@ -219,6 +225,7 @@ body.connected .status-txt { color: var(--green); }
   align-items: center; justify-content: center;
   gap: 18px;
   transition: opacity 0.5s;
+  -webkit-app-region: drag;
 }
 #conn-overlay.hidden { opacity: 0; pointer-events: none; }
 
@@ -1419,6 +1426,10 @@ function startPywebviewPolling() {
 //  QUIT & MINIMIZE
 // ════════════════════════════════════════════════════════════
 async function quit() {
+  if (window.electronAPI) {
+    window.electronAPI.quit();
+    return;
+  }
   try {
     if ("__TAURI_INTERNALS__" in window) {
       await window.tauriInvoke("quit_app");
@@ -1431,6 +1442,10 @@ async function quit() {
 }
 
 async function minimize() {
+  if (window.electronAPI) {
+    window.electronAPI.minimize();
+    return;
+  }
   try {
     if ("__TAURI_INTERNALS__" in window) {
       await window.tauriInvoke("minimize_window");
