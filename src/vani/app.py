@@ -1531,20 +1531,6 @@ async def entrypoint(ctx):
         def _on_stop(*_):
             _patched_state_update(dict(speaking=False, listening=True, processing=False, status="Listening...", transcript=""))
             _run_audio(vani_activated)
-            
-            # Local TTS intercept
-            if os.getenv("VANI_LOCAL_TTS", "0") == "1":
-                try:
-                    msgs = [m for m in sess.history.items if m.role in ("assistant", "agent")]
-                    if msgs:
-                        last_msg = msgs[-1]
-                        text = last_msg.text or last_msg.text_content or ""
-                        if text:
-                            log.info(f"[LOCAL_TTS] Speaking direct turn: {text}")
-                            from vani.audio.local_tts import speak_local
-                            speak_local(text)
-                except Exception as ex:
-                    log.warning(f"[LOCAL_TTS] Failed to speak last message: {ex}")
 
         # ── Speaker verification: pre-compute embedding while user is still speaking ──
         _pending_speaker_future = None
@@ -1609,6 +1595,19 @@ async def entrypoint(ctx):
                         _recently_spoken_fallback_texts.discard(text_strip)
                         return
                     _patched_state_update(dict(transcript=text))
+
+                    # ── Native TTS intercept (VANI_LOCAL_TTS=1) ──────────────────
+                    # Gemini audio is muted via RoomOutputOptions(audio_enabled=False).
+                    # This fires when text is committed — before LiveKit would play audio.
+                    # Result: 250-400ms perceived latency vs 600-1400ms with Gemini audio.
+                    if os.getenv("VANI_LOCAL_TTS", "0") == "1" and text_strip:
+                        try:
+                            from vani.audio.local_tts import speak_local_async
+                            speak_local_async(text_strip)
+                            log.info(f"[NATIVE_TTS] Speaking via OS TTS: {text_strip[:60]!r}")
+                        except Exception as _tts_ex:
+                            log.warning(f"[NATIVE_TTS] speak_local_async failed: {_tts_ex}")
+                    # ── END Native TTS ────────────────────────────────────────────
             except Exception:
                 pass
 
@@ -1743,7 +1742,11 @@ async def entrypoint(ctx):
 
             room_output = None
             if RoomOutputOptions is not None:
-                room_output = RoomOutputOptions(audio_enabled=True)
+                # In native TTS mode (VANI_LOCAL_TTS=1), mute Gemini's audio output.
+                # We intercept the text via conversation_item_added and speak via
+                # macOS 'say' / Windows SAPI instead — eliminates double speech.
+                _native_tts_mode = os.getenv("VANI_LOCAL_TTS", "0") == "1"
+                room_output = RoomOutputOptions(audio_enabled=not _native_tts_mode)
 
             kwargs = {}
             if room_input:
